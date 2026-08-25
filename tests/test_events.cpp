@@ -15,13 +15,15 @@ TEST(EventsTest, EngineResultEnumValues) {
     EngineResult r3 = EngineResult::UnknownOrderId;
     EngineResult r4 = EngineResult::InvalidQuantity;
     EngineResult r5 = EngineResult::InvalidPrice;
+    EngineResult r6 = EngineResult::PoolExhausted;
 
     // Silence unused variable warnings
-    (void)r1; (void)r2; (void)r3; (void)r4; (void)r5;
+    (void)r1; (void)r2; (void)r3; (void)r4; (void)r5; (void)r6;
 
     // Confirm enum values are distinct
     EXPECT_NE(EngineResult::Accepted, EngineResult::DuplicateOrderId);
     EXPECT_NE(EngineResult::Accepted, EngineResult::UnknownOrderId);
+    EXPECT_NE(EngineResult::Accepted, EngineResult::PoolExhausted);
 }
 
 TEST(EventsTest, EngineResponseConstruction) {

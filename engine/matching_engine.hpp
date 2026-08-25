@@ -27,9 +27,12 @@ namespace miniexchange {
 // ID, invalid price/qty) — never throws for client-input errors.
 class MatchingEngine : public EngineAPI {
 public:
-    // Constructor: takes an optional EventSink pointer. Defaults to the
-    // NullEventSink singleton (no-op) when nothing is wired up.
-    explicit MatchingEngine(EventSink* sink = NullEventSink::instance());
+    // Constructor: takes an optional EventSink pointer and pool capacity.
+    // Defaults to the NullEventSink singleton (no-op) when nothing is
+    // wired up, and 1,000,000 pool slots (sufficient for production use;
+    // tests may pass a smaller value to exercise pool exhaustion).
+    explicit MatchingEngine(EventSink* sink = NullEventSink::instance(),
+                            std::size_t pool_capacity = 1'000'000);
 
     // EngineAPI interface implementation.
     EngineResponse submit(const NewOrder& order) override;

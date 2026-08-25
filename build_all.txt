@@ -1,0 +1,65 @@
+﻿[1/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark.dir/benchmark_name.cc.obj
+[2/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark.dir/counter.cc.obj
+[3/65] Building CXX object CMakeFiles/workload_generator.dir/tools/workload_generator/workload_generator.cpp.obj
+[4/65] Building CXX object CMakeFiles/engine.dir/engine/matching_engine.cpp.obj
+[5/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark.dir/check.cc.obj
+[6/65] Linking CXX static library libengine.a
+[7/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark.dir/colorprint.cc.obj
+[8/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark.dir/string_util.cc.obj
+[9/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark.dir/reporter.cc.obj
+[10/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark.dir/console_reporter.cc.obj
+[11/65] Building CXX object CMakeFiles/core_trade_test.dir/tests/core_trade_test.cpp.obj
+[12/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark.dir/json_reporter.cc.obj
+[13/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark.dir/complexity.cc.obj
+[14/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark.dir/csv_reporter.cc.obj
+[15/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark.dir/benchmark_api_internal.cc.obj
+[16/65] Building CXX object CMakeFiles/interfaces_test.dir/tests/test_interfaces.cpp.obj
+[17/65] Building CXX object CMakeFiles/price_level_test.dir/tests/price_level_test.cpp.obj
+[18/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark.dir/perf_counters.cc.obj
+[19/65] Building CXX object CMakeFiles/order_types_test.dir/tests/test_order_types.cpp.obj
+[20/65] Building CXX object CMakeFiles/order_book_test.dir/tests/order_book_test.cpp.obj
+[21/65] Linking CXX static library libworkload_generator.a
+[22/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark.dir/commandlineflags.cc.obj
+[23/65] Building CXX object CMakeFiles/mini_exchange.dir/apps/cli/cli_parser.cpp.obj
+[24/65] Building CXX object CMakeFiles/mini_exchange.dir/apps/cli/main.cpp.obj
+[25/65] Building CXX object CMakeFiles/edge_case_test.dir/tests/edge_case_test.cpp.obj
+[26/65] Building CXX object CMakeFiles/integration_test.dir/tests/integration_test.cpp.obj
+[27/65] Building CXX object CMakeFiles/matching_engine_test.dir/tests/matching_engine_test.cpp.obj
+[28/65] Building CXX object CMakeFiles/core_types_test.dir/tests/core_types_test.cpp.obj
+[29/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark.dir/statistics.cc.obj
+[30/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark.dir/sysinfo.cc.obj
+[31/65] Building CXX object CMakeFiles/mini_exchange.dir/apps/cli/console_printer.cpp.obj
+[32/65] Building CXX object CMakeFiles/workload_generator_test.dir/tests/workload_generator_test.cpp.obj
+[33/65] Building CXX object CMakeFiles/events_test.dir/tests/test_events.cpp.obj
+[34/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark_main.dir/benchmark_main.cc.obj
+[35/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark.dir/timers.cc.obj
+[36/65] Linking CXX executable order_types_test.exe
+[37/65] Building CXX object CMakeFiles/benchmark_harness.dir/apps/benchmark/results_writer.cpp.obj
+[38/65] Linking CXX executable core_trade_test.exe
+[39/65] Linking CXX executable core_types_test.exe
+[40/65] Building CXX object _deps/googletest-build/googlemock/CMakeFiles/gmock.dir/src/gmock-all.cc.obj
+[41/65] Linking CXX executable interfaces_test.exe
+[42/65] Linking CXX executable price_level_test.exe
+[43/65] Linking CXX static library lib\libgmock.a
+[44/65] Linking CXX executable events_test.exe
+[45/65] Linking CXX executable integration_test.exe
+[46/65] Linking CXX executable mini_exchange.exe
+[47/65] Linking CXX executable order_book_test.exe
+[48/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark.dir/benchmark_runner.cc.obj
+[49/65] Linking CXX executable matching_engine_test.exe
+[50/65] Building CXX object CMakeFiles/latency_recorder_test.dir/apps/benchmark/latency_recorder.cpp.obj
+[51/65] Linking CXX executable workload_generator_test.exe
+[52/65] Linking CXX executable edge_case_test.exe
+[53/65] Building CXX object CMakeFiles/benchmark_harness.dir/apps/benchmark/throughput_bench.cpp.obj
+[54/65] Building CXX object _deps/googletest-build/googlemock/CMakeFiles/gmock_main.dir/src/gmock_main.cc.obj
+[55/65] Building CXX object CMakeFiles/benchmark_harness.dir/apps/benchmark/latency_bench.cpp.obj
+[56/65] Building CXX object CMakeFiles/benchmark_harness.dir/apps/benchmark/latency_recorder.cpp.obj
+[57/65] Linking CXX static library lib\libgmock_main.a
+[58/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark.dir/benchmark.cc.obj
+[59/65] Building CXX object CMakeFiles/latency_recorder_test.dir/tests/latency_recorder_test.cpp.obj
+[60/65] Building CXX object CMakeFiles/benchmark_harness.dir/apps/benchmark/main.cpp.obj
+[61/65] Linking CXX executable latency_recorder_test.exe
+[62/65] Building CXX object _deps/benchmark-build/src/CMakeFiles/benchmark.dir/benchmark_register.cc.obj
+[63/65] Linking CXX static library _deps\benchmark-build\src\libbenchmark.a
+[64/65] Linking CXX static library _deps\benchmark-build\src\libbenchmark_main.a
+[65/65] Linking CXX executable benchmark_harness.exe

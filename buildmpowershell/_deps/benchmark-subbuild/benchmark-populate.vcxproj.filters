@@ -1,0 +1,44 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\harsh\Desktop\MiniExchange\buildmpowershell\_deps\benchmark-subbuild\CMakeFiles\61187f503301f5a1c5dc4c8e30381be9\benchmark-populate-mkdir.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\harsh\Desktop\MiniExchange\buildmpowershell\_deps\benchmark-subbuild\CMakeFiles\61187f503301f5a1c5dc4c8e30381be9\benchmark-populate-download.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\harsh\Desktop\MiniExchange\buildmpowershell\_deps\benchmark-subbuild\CMakeFiles\61187f503301f5a1c5dc4c8e30381be9\benchmark-populate-update.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\harsh\Desktop\MiniExchange\buildmpowershell\_deps\benchmark-subbuild\CMakeFiles\61187f503301f5a1c5dc4c8e30381be9\benchmark-populate-patch.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\harsh\Desktop\MiniExchange\buildmpowershell\_deps\benchmark-subbuild\CMakeFiles\61187f503301f5a1c5dc4c8e30381be9\benchmark-populate-configure.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\harsh\Desktop\MiniExchange\buildmpowershell\_deps\benchmark-subbuild\CMakeFiles\61187f503301f5a1c5dc4c8e30381be9\benchmark-populate-build.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\harsh\Desktop\MiniExchange\buildmpowershell\_deps\benchmark-subbuild\CMakeFiles\61187f503301f5a1c5dc4c8e30381be9\benchmark-populate-install.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\harsh\Desktop\MiniExchange\buildmpowershell\_deps\benchmark-subbuild\CMakeFiles\61187f503301f5a1c5dc4c8e30381be9\benchmark-populate-test.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\harsh\Desktop\MiniExchange\buildmpowershell\_deps\benchmark-subbuild\CMakeFiles\8d69b106cbf33ecd661a2c04bb09bbf7\benchmark-populate-complete.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\harsh\Desktop\MiniExchange\buildmpowershell\_deps\benchmark-subbuild\CMakeFiles\73b4616fdbc4fea95bc2d7c515f6c5e4\benchmark-populate.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\harsh\Desktop\MiniExchange\buildmpowershell\_deps\benchmark-subbuild\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="C:\Users\harsh\Desktop\MiniExchange\buildmpowershell\_deps\benchmark-subbuild\CMakeFiles\benchmark-populate" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{ED2782DA-AB44-3FE1-B328-16B7AB1F08B1}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

@@ -20,6 +20,8 @@ const char* ConsolePrinter::result_to_string(EngineResult result) {
             return "REJECTED: InvalidQuantity";
         case EngineResult::InvalidPrice:
             return "REJECTED: InvalidPrice";
+        case EngineResult::PoolExhausted:
+            return "REJECTED: PoolExhausted";
     }
     return "UNKNOWN";
 }

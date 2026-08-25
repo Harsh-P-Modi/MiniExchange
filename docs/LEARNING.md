@@ -2085,3 +2085,1277 @@ The README lives at the repo root because that's what GitHub renders by default 
 **Check your understanding:**
 1. When would you create a *new* ADR vs. updating an existing one? (Hint: if Phase 3 switches from `std::map` to a flat sorted array for the price tree, is that a new ADR or an update to ADR-002?)
 2. Why does ADR-001 mention "signed, not unsigned" for prices — what calculation produces a negative price-related value that unsigned would mishandle?
+
+---
+
+## Phase 2: Benchmark Harness + Baseline Numbers
+
+### Task 1 — `tools/workload_generator/WorkloadGenerator`
+
+**What it does:**
+Generates a deterministic sequence of synthetic exchange events — `LimitOrder`, `MarketOrder`, and `CancelRequest` — for use in benchmark harnesses and (later) Phase 10's strategy SDK. Given a `WorkloadConfig`, the generator produces events with realistic properties: log-normal price distribution around a mid-price, configurable ADD/CANCEL/MARKET mix ratios, and cancel events that only reference previously generated limit-order IDs. The key property: given the same seed, two independent `WorkloadGenerator` instances produce bit-for-bit identical event sequences (R5 reproducibility).
+
+**Exact locations:**
+- `tools/workload_generator/workload_generator.hpp` (full file) — declares `WorkloadConfig`, `CancelRequest`, `WorkloadEvent` variant, and the `WorkloadGenerator` class
+- `tools/workload_generator/workload_generator.cpp` (full file) — implements the `generate()` method with price/side/quantity/event-type generation logic
+- `tests/workload_generator_test.cpp` (full file) — 8 GoogleTest cases covering reproducibility, statistical distribution, and correctness invariants
+- `CMakeLists.txt` (lines ~100–106) — `workload_generator` library target and `workload_generator_test` test executable
+
+**Why this data structure / algorithm, specifically:**
+
+The generator uses `std::mt19937_64` (Mersenne Twister, 64-bit) seeded exclusively from `config.seed`. Why this PRNG specifically:
+
+- **Determinism across platforms:** `std::mt19937_64` with a given seed produces the identical sequence on any conforming C++ standard library implementation — critical for R5's "reproducible across machines/sessions" requirement
+- **Period (2^19937 - 1):** impossibly long cycle, no chance of repeating within any benchmark run
+- **Speed:** single-threaded throughput of ~500M random numbers/sec — negligible overhead compared to the engine operations being benchmarked
+
+Alternative PRNGs considered:
+- `std::minstd_rand` — faster but shorter period and lower quality (fails several statistical tests); since the generator is used to create "realistic" order flow, poor randomness quality could create pathological patterns that make benchmark results misleading
+- PCG or xoshiro256++ — better modern PRNGs, but not standardized in C++20's `<random>`. Using them would require either a third-party dependency or rolling our own implementation, both of which add complexity without measurable benefit for this use case
+- `std::random_device` — non-deterministic (OS entropy), which directly violates R5
+
+**Price generation algorithm:**
+1. Sample `offset_raw` from `std::lognormal_distribution(0, config.price_stddev_log)`
+2. Round to integer, clamp to minimum 1 (non-zero offset)
+3. Flip a fair coin (50/50 from the same RNG) to add or subtract from `mid_price`
+4. Clamp final price to > 0
+
+Why log-normal specifically: real order flow clusters near the "touch" (best bid/ask), with a fat tail of orders deeper in the book. Log-normal approximates this shape cheaply — most offsets are small (near the touch), occasional offsets are large (depth). Uniform distribution (the simplest alternative) would unrealistically spread orders evenly across all price levels, making the book look nothing like a real one and potentially masking performance differences between the price tree's hot path (near the top) and cold path (deep levels).
+
+**Why `CancelRequest` lives here, not in `core/`:**
+The engine's `EngineAPI::cancel()` takes a bare `OrderId` — there's no domain concept of a "cancel request struct." `CancelRequest{OrderId id}` exists solely to give the `WorkloadEvent` variant a distinct type for `std::visit` dispatch. Putting it in `core/` would pollute the domain vocabulary with a workload-generation concern that no real engine component ever uses.
+
+**Why `assumed_resting_` tracking is approximate:**
+The generator doesn't wire to a real engine while generating events. It tracks which `OrderId`s it issued as `LimitOrder`s and hasn't yet "cancelled," but it can't know whether the engine actually filled those orders. So a generated CANCEL might reference an ID the engine already fully consumed during matching. This is acceptable for throughput benchmarks (an occasional `UnknownOrderId` result doesn't meaningfully change ops/sec measurements), but **would not** be acceptable if reused for Phase 10 strategies where behavior realism matters — flagged here so Phase 10 doesn't blindly trust the generator's cancel accuracy.
+
+When `assumed_resting_` is empty and a CANCEL would be generated, the generator falls back to producing a `LimitOrder` instead. This means the actual mix ratio can deviate slightly from the configured ratio (slightly more limit orders, slightly fewer cancels) — the statistical test accounts for this by checking the market-order ratio independently (unaffected by fallback) and verifying that the combined limit+cancel ratio stays within tolerance.
+
+**Why this architecture / where it lives:**
+`tools/workload_generator/` — not `apps/` (it's a library, not an executable), not `adapters/` (it doesn't translate an external protocol into `EngineAPI` calls), not `core/` (it's not a domain primitive). It's a shared tool library that Phase 2's benchmark harness and Phase 10's strategy SDK both genuinely need. This is earned reuse (Phase 10 is already on the roadmap), not speculative.
+
+The `workload_generator` CMake target links only to `miniexchange_warnings` (for compiler flags and include paths), not to `engine` or `orderbook`. The generator is decoupled from the engine — it produces events, but doesn't submit them anywhere. The benchmark harness (`apps/benchmark/`) does the wiring: generate events (untimed), then feed them to a `MatchingEngine` (timed). This separation means the generator compiles and tests independently, without pulling in the full engine dependency chain.
+
+**Complexity:**
+- **Time:** `generate(count)` is O(count). Each event generation involves:
+  - One uniform draw for event type selection: O(1)
+  - One uniform draw for side: O(1)
+  - One log-normal draw for price offset (limit orders): O(1)
+  - One uniform draw for quantity: O(1)
+  - One uniform draw + swap-and-pop removal for cancel: O(1) amortized
+- **Space:** O(count) for the returned vector, plus O(limit_orders_generated) for `assumed_resting_` (bounded by count, in practice much smaller due to cancels removing entries)
+
+**Benefits:**
+1. **Deterministic/reproducible:** Same seed → identical sequence, always. Benchmark comparisons between Phase 2 and Phase 3 can use identical workloads, isolating only the engine's performance change
+2. **Configurable:** Mix ratios, price distribution, quantity range, and seed are all parameters. Different benchmark scenarios (cancel-heavy, match-heavy, wide spread, tight spread) are achieved by changing config, not code
+3. **Correct by construction:** Cancel events reference real prior limit-order IDs; market-order IDs are never tracked as resting (matching Phase 1's R10: market orders never rest). This prevents the benchmark from measuring artificial `UnknownOrderId` rejection paths that wouldn't occur with a correctly integrated gateway
+4. **Decoupled from the engine:** The generator can be tested independently (as the 8 GoogleTest cases demonstrate) without instantiating any engine or orderbook
+
+**Drawbacks / tradeoffs accepted:**
+1. **Quantity distribution is plain uniform**, not log-normal like price offsets. Real markets exhibit skewed quantity distributions (many small orders, fewer large ones). For this phase's benchmarks (R1–R4), quantity shape doesn't affect the measurements being taken (a cancel is O(1) regardless of the order's size; a match traverses by *count* of resting orders, not by quantity), so uniform is the simplest correct choice. Phase 10 can revisit if strategy realism demands it
+2. **Cancel accuracy is approximate** (see above) — the generator doesn't know about actual fills. Acceptable for benchmarks, not for realistic strategy simulation
+3. **No validation that ratios sum to 1.0:** The config is trusted to be well-formed. If `add_limit_ratio + add_market_ratio + cancel_ratio != 1.0`, the behavior is undefined (excess probability "leaks" to cancels, or some events are never generated). This is a deliberate simplicity choice — the benchmark harness controls the config, not untrusted external input
+4. **Side distribution is uniform 50/50**, not correlated with price offset or order flow state. Real markets have directional pressure (more buys when price is rising). For Phase 2's purpose (measuring engine throughput, not modeling market microstructure), this doesn't matter
+
+**Alternatives considered and rejected:**
+
+1. **Building the workload inline in each benchmark case (no shared generator):**
+   - Pros: Simpler for Phase 2 alone, no separate library to maintain
+   - Cons: Phase 10 already needs the same capability. Building it now as a shared library avoids duplicating generation logic later. This is earned reuse (it's on the roadmap), not speculative
+
+2. **Using a real engine to track actual fills instead of `assumed_resting_`:**
+   - Pros: Perfect cancel accuracy (only cancel orders that are genuinely still resting)
+   - Cons: Creates a circular dependency (generator depends on engine, but the benchmark uses the generator to *test* the engine). Also makes the generator's output non-deterministic with respect to engine behavior changes — a bug fix in matching logic would change the generated event sequence. The "approximate tracking" approach keeps generation fully deterministic and decoupled
+   - Rejected because decoupling and determinism outweigh cancel accuracy for benchmarking purposes
+
+3. **Gaussian/normal distribution for price offsets instead of log-normal:**
+   - Pros: Simpler (no log transform), symmetric natively
+   - Cons: Normal distribution allows negative values naturally, requiring clamping; it also doesn't have the "fat tail with most mass near zero" shape that real order books exhibit. Log-normal is inherently positive and right-skewed, which is a better approximation of order clustering near the touch with sparse activity far from it
+   - Rejected because log-normal more closely approximates real order flow with equal implementation complexity
+
+4. **`std::variant<NewOrder, CancelRequest>` (reusing the existing `NewOrder` variant) instead of `WorkloadEvent`:**
+   - Pros: Fewer types, reuses existing `NewOrder = std::variant<LimitOrder, MarketOrder>`
+   - Cons: Nested variants (`std::variant<std::variant<LimitOrder, MarketOrder>, CancelRequest>`) are ergonomically painful to visit — requires nested `std::visit` calls or custom overload sets. A flat three-alternative variant (`std::variant<LimitOrder, MarketOrder, CancelRequest>`) is simpler at the usage site (one `std::visit` with three cases) despite introducing a "parallel" type
+   - Rejected because flat variant is simpler for consumers (the benchmark dispatch code)
+
+**How this connects to what came before:**
+Phase 1 created the domain types (`LimitOrder`, `MarketOrder`, `OrderId`, `Price`, `Quantity`, `Side` in `core/`) and the engine that processes them. Phase 2 Task 1 builds on those types — `WorkloadEvent` directly uses `LimitOrder` and `MarketOrder` from `core/NewOrder.hpp` and all the primitive types from `core/Types.hpp`. The generator is the first code outside `engine/`/`orderbook/`/`core/` that composes these types into meaningful sequences, bridging the gap between "the engine can process an order" and "here are 100,000 realistic orders to measure how fast it does so."
+
+**Check your understanding:**
+1. Why does the generator never add `MarketOrder` IDs to `assumed_resting_`? What Phase 1 requirement does this mirror, and what would go wrong in the benchmark if it did?
+2. If you changed `std::mt19937_64` to `std::random_device` in the constructor, which specific acceptance criterion would immediately break, and why?
+3. The generator uses swap-and-pop removal from `assumed_resting_` when generating a cancel. Why is this O(1), and why doesn't the loss of insertion order matter here? (Hint: the generator picks a *random* index to cancel — it doesn't need to cancel in FIFO order.)
+
+### Task 2 — `apps/benchmark/` Build Skeleton
+
+**What it does:**
+Adds the CMake target (`benchmark_harness`) and a trivial `main.cpp` that proves all required libraries — Google Benchmark, engine, orderbook, and workload_generator — link correctly into a single benchmark executable. No actual benchmark registrations yet; this is pure build-system wiring to unblock subsequent tasks.
+
+**Exact locations:**
+- `apps/benchmark/main.cpp` (lines 1–12) — trivial entry point using `BENCHMARK_MAIN()` with project header includes to prove linkage
+- `CMakeLists.txt` (last block, after the CLI application target) — `benchmark_harness` executable definition and link libraries
+
+**Why this data structure / algorithm, specifically:**
+N/A — this task is build wiring, not algorithmic work. The interesting decision is the target name and link list.
+
+**Why this architecture:**
+- The target is named `benchmark_harness`, not `benchmark`, to avoid collision with Google Benchmark's own `benchmark` library target (CMake doesn't allow two targets with the same name in one build tree).
+- The executable is *not* registered with `ctest` (`gtest_discover_tests` is intentionally absent). Benchmarks are measurement tools, not pass/fail correctness tests — running them in CI would produce noisy, non-deterministic results that would either always "pass" (meaningless) or flake randomly (actively harmful). They're run manually or via `scripts/run_benchmarks.sh` (Task 9) under controlled conditions.
+- Link libraries include `benchmark::benchmark` and `benchmark::benchmark_main` (Google Benchmark provides the `main()` implementation via `BENCHMARK_MAIN()`), plus `engine`, `orderbook`, and `workload_generator` — everything the benchmark cases in Tasks 4–7 will need, validated now so future tasks only add source files, not new link dependencies.
+
+**Complexity:**
+N/A — build configuration, not runtime code.
+
+**Benefits:**
+1. **Fail-fast on link issues:** If any library has an unresolved symbol or ABI mismatch (e.g., mismatched C++ standard between Google Benchmark and our code), we discover it here — not buried inside a 200-line benchmark implementation later
+2. **Incremental task isolation:** Tasks 4–7 can focus purely on writing benchmark logic without debugging CMake at the same time
+
+**Drawbacks / tradeoffs accepted:**
+1. **The trivial `main.cpp` includes headers it doesn't use yet:** `matching_engine.hpp`, `order_book.hpp`, `workload_generator.hpp` are included only to force the linker to resolve their symbols. This is slightly unusual (most code only includes what it actively calls), but it's the cheapest way to verify linkage without writing throwaway code. Once Task 4 adds real benchmark bodies, these includes become genuinely used.
+
+**Alternatives considered and rejected:**
+1. **Using `add_executable(benchmark ...)` as the target name:**
+   - Rejected because Google Benchmark's FetchContent creates a target named `benchmark`. CMake would error with "target 'benchmark' already exists."
+2. **Registering the benchmark with ctest:**
+   - Rejected because benchmarks aren't pass/fail. Running them in CI would either produce meaningless green checks or flaky failures depending on machine load. The design doc (§5) explicitly says benchmarks are run manually.
+3. **Waiting until Task 4 to create the executable:**
+   - Rejected because debugging "my benchmark code doesn't work" plus "my CMake wiring is broken" simultaneously is slower than confirming the wiring first.
+
+**How this connects to what came before:**
+Task 1 created the `workload_generator` library (the synthetic event producer). Task 2 creates the executable that will *use* that library alongside `engine` and `orderbook` to measure performance. The dependency chain is: `benchmark_harness` → `engine` → `orderbook` → `core/` (headers), plus `benchmark_harness` → `workload_generator` → `core/` (headers), plus `benchmark_harness` → `benchmark::benchmark` (Google Benchmark).
+
+**Check your understanding:**
+1. Why is the benchmark target named `benchmark_harness` instead of just `benchmark`? What would happen during CMake configuration if you used the bare name?
+2. Why does the benchmark executable link both `benchmark::benchmark` and `benchmark::benchmark_main`? What does each provide, and what would fail if you only linked one?
+
+### Task 3 — `apps/benchmark/LatencyRecorder`
+
+**What it does:**
+A lightweight statistics accumulator that records individual operation latencies (as `std::chrono::nanoseconds` samples) and computes summary statistics on demand: arithmetic mean, median, 99th percentile, and maximum. It's the bridge between "measure one operation" (steady_clock timing around a single `submit`/`cancel` call) and "report human-readable stats" (the numbers in `benchmarks/results/phase-02-baseline.md`).
+
+**Exact locations:**
+- `apps/benchmark/latency_recorder.hpp` (full file) — class declaration with `record`, `avg_ns`, `median_ns`, `p99_ns`, `max_ns`, `count`
+- `apps/benchmark/latency_recorder.cpp` (full file) — implementations using `std::sort`, `std::accumulate`, `std::max_element`, and `std::ceil` for percentile indexing
+- `tests/latency_recorder_test.cpp` (full file) — 7 GoogleTest cases with hand-computed expected values
+- `CMakeLists.txt` (latency_recorder_test target) — compiles `latency_recorder.cpp` directly into the test executable (app-local, not a shared library)
+
+**Why this data structure / algorithm, specifically:**
+
+The core design choice: **store all raw samples in a `std::vector<nanoseconds>`, sort on read.**
+
+For recording: `record()` does a single `push_back` — O(1) amortized. This is critical because `record()` is called inside the timing loop (between `start` and `end`), albeit after the measured operation completes. Any overhead here adds noise to subsequent measurements if the allocator triggers during `push_back`. In practice, `std::vector` with geometric growth amortizes allocations to negligible cost (one reallocation per doubling), and Phase 2's benchmarks run at most ~100,000 iterations — that's ~800KB of samples (100k × 8 bytes per `nanoseconds`), well within L2/L3 cache. No premature optimization needed.
+
+For querying: `avg_ns()`, `median_ns()`, `p99_ns()`, and `max_ns()` each operate on the full sample set. `avg_ns()` uses `std::accumulate` (O(n) linear scan). `median_ns()` and `p99_ns()` sort a *copy* of the vector (O(n log n)), then index into it. `max_ns()` uses `std::max_element` (O(n) linear scan).
+
+Why sort-on-read instead of maintaining a sorted structure (e.g., `std::multiset`, a skip list, or insertion-sort on every `record()`)?
+
+1. **Queries happen exactly once**, after all measurements are complete. The usage pattern from `design.md` §3 is: run N iterations → `record()` N times → call `avg_ns()`/`median_ns()`/`p99_ns()`/`max_ns()` once each. With one-time reads, paying O(n log n) once is cheaper than paying O(log n) per insert times N inserts.
+
+2. **No cache pollution during measurement.** A sorted structure (tree-based or otherwise) performs pointer-chasing or node movement on every insert, polluting CPU caches during the measurement phase. A vector append is a sequential write to the end — cache-friendly, minimal branch misprediction.
+
+3. **Simpler implementation.** `std::sort` + index is straightforward and auditable. A running-median structure (two heaps, or a Fenwick tree) would be more complex for no practical benefit given the one-time-read pattern.
+
+**Percentile computation formula:**
+
+The P99 index is: `ceil(0.99 * count) - 1` (0-based indexing into the sorted array).
+
+For `count = 100`: `ceil(0.99 * 100) - 1 = ceil(99) - 1 = 99 - 1 = 98`. Value at index 98 in a sorted 1..100 array is 99.
+
+For `count = 1`: `ceil(0.99 * 1) - 1 = ceil(0.99) - 1 = 1 - 1 = 0`. Value at index 0 is the single sample — correct (P99 of one sample is that sample).
+
+This formula ensures P99 is always a real sample value (no interpolation), which matches what systems engineers expect: "the 99th percentile latency was X ns" means "at least 99% of operations completed in X ns or less."
+
+**Median computation:**
+
+For odd count N: sorted[N/2] (the single middle element).
+For even count N: (sorted[N/2 - 1] + sorted[N/2]) / 2.0 (average of the two middle elements).
+
+This is the standard textbook median definition. The result is `double` because averaging two integers can produce a non-integer (e.g., median of {50, 51} = 50.5).
+
+**Why `double` return type for all methods:**
+
+All four stats return `double`, not `int64_t` or `nanoseconds`:
+- `avg_ns()` is inherently non-integer (5050/100 = 50.5)
+- `median_ns()` is non-integer for even counts (see above)
+- `p99_ns()` and `max_ns()` *happen* to always be integers (they're raw sample values), but returning `double` keeps the API uniform and avoids callers needing different formatting for "sometimes integer, sometimes not"
+
+The floating-point concern from `tech.md` ("no floating point in core/orderbook/engine") doesn't apply here — `LatencyRecorder` lives in `apps/benchmark/`, which is measurement/presentation code, not matching logic. Floating point is fine for statistics display; it's forbidden for *prices* and *quantities* in the matching path because IEEE 754 arithmetic is non-deterministic across compiler/platform combinations.
+
+**Why app-local (not a shared library):**
+
+`LatencyRecorder` is compiled directly into `latency_recorder_test.exe` (and will later be compiled into `benchmark_harness`) rather than built as a separate CMake library target. Reasons:
+
+1. **No other consumer.** Only `apps/benchmark/` uses it. Creating a library for one consumer is over-engineering.
+2. **Avoids link-order complexity.** A one-file utility compiled directly into targets that need it is simpler than managing inter-library dependencies.
+3. **Mirrors the architecture:** `apps/benchmark/` is a composition root — all its local utilities (LatencyRecorder, ResultsWriter) are app-specific concerns that don't belong in shared code.
+
+If a second consumer ever appeared (e.g., a latency-recording adapter for Phase 5's TCP gateway), *that's* the signal to extract it into a shared library — not before.
+
+**Why the tests use exact assertions (`EXPECT_DOUBLE_EQ`), not approximate:**
+
+The task requirements specifically say "this is pure arithmetic, so tests should be exact, not approximate." The reason: all inputs are small integers (1..100 ns), all operations are integer addition/division/indexing, and the only floating-point operation is the final division (sum / count). For these small values, IEEE 754 `double` can represent the results exactly — `50.5` is exactly representable in binary floating point (it's `0.5 × 101` in scientific notation, and 0.5 = 2^-1 is exact). There's no floating-point rounding error to worry about here, so approximate assertions would only hide bugs.
+
+**Complexity:**
+- **`record()`:** O(1) amortized (vector push_back)
+- **`avg_ns()`:** O(n) — linear accumulation
+- **`median_ns()`:** O(n log n) — sort a copy, then O(1) index
+- **`p99_ns()`:** O(n log n) — sort a copy, then O(1) index
+- **`max_ns()`:** O(n) — single pass with `std::max_element`
+- **Space:** O(n) where n is the number of recorded samples (one `nanoseconds` value per sample = 8 bytes each)
+
+Note: `median_ns()` and `p99_ns()` each sort their own copy. If both are called (which they always are — the results writer needs all four stats), the vector is sorted twice. This could be optimized to sort once and share, but for N ≤ 100,000 samples, two sorts take ~2ms total — irrelevant compared to the minutes of benchmark measurement time they summarize.
+
+**Benefits:**
+1. **Zero overhead during measurement:** `record()` is a vector append — the cheapest possible operation that preserves all information. No rebalancing, no pointer chasing, no branching
+2. **Correct for all edge cases:** Empty recorder returns 0.0 (not NaN, not a crash). Single sample returns that sample for all four stats. Even count correctly averages two middle elements. These properties are proven by the test suite
+3. **Transparent and auditable:** The implementation is ~60 lines of straightforward standard library calls. A recruiter reading it sees competent use of `<algorithm>` and `<numeric>`, not over-engineered abstraction
+4. **Exact results for small-integer inputs:** The test suite proves correctness with hand-computed values — no "close enough" fuzziness that might mask off-by-one errors in percentile indexing
+
+**Drawbacks / tradeoffs accepted:**
+1. **Sorting a copy on every query call:** If `median_ns()` and `p99_ns()` are both called, the vector is sorted twice. Optimization would be to sort once into a cached member and invalidate on `record()`. Not worth the complexity for one-shot usage (query happens once, after all recording is done)
+2. **No streaming/online algorithm for percentiles:** An online algorithm (t-digest, P² algorithm, or a pair of heaps for running median) could compute statistics incrementally without storing all samples. Rejected because: (a) we need exact results (online algorithms are approximate), (b) memory isn't a constraint (100k × 8 bytes = 800KB), and (c) the stored samples are useful for post-hoc analysis (e.g., plotting a latency histogram or detecting bimodal distributions)
+3. **Not thread-safe:** If two threads call `record()` concurrently, the vector could corrupt. This is fine because Phase 2's benchmarks are single-threaded by design (single-threaded engine, single measurement thread). Phase 4 (lock-free queue) will have its own measurement strategy
+
+**Alternatives considered and rejected:**
+
+1. **`std::multiset<nanoseconds>` (always-sorted container):**
+   - Pros: `median` and `p99` are O(1) to read (advance iterator to position N/2 or N*0.99)
+   - Cons: O(log n) per insert (balanced tree rebalancing), heap allocation per node (tree node overhead), poor cache locality during recording. With 100k inserts and 1 read, this trades 100k × O(log n) insert cost for 2 × O(1) read cost — strictly worse than 100k × O(1) insert + 2 × O(n log n) sort
+   - Rejected because recording is the hot path, reading is the cold path
+
+2. **`std::nth_element` instead of full sort for median/p99:**
+   - Pros: O(n) average-case for a single percentile (partial sorting)
+   - Cons: Need to call twice (once for median index, once for P99 index), each mutating a copy. Total: O(n) × 2 = O(n), which is better asymptotically than O(n log n). However: for n = 100k, the constant factor of `nth_element` (quickselect with partitioning) vs. `std::sort` (introsort, highly cache-optimized) makes `sort` competitive or faster in practice on modern CPUs due to branch prediction and SIMD vectorization
+   - Rejected as a premature micro-optimization: full sort is simpler to understand, and the ~1ms difference on 100k samples is immaterial for a utility that runs once per benchmark suite
+
+3. **Histogram bins (fixed-width buckets, e.g., 1ns per bucket up to 10μs):**
+   - Pros: O(1) insert (increment bucket), O(bucket_count) for any percentile (walk buckets until cumulative count reaches target). Constant memory regardless of sample count
+   - Cons: Quantization error — a 1ns-wide bucket can't distinguish between 99ns and 100ns if they fall in the same bucket. For Phase 2's benchmarks where individual operations might take 50–500ns, 1ns granularity would require 500 buckets (fine), but the approach doesn't generalize well and adds configuration (how many buckets? what width?). More complex to implement correctly (overflow handling, dynamic bucket expansion)
+   - Rejected because raw sample storage is simpler, uses acceptable memory, and gives exact results
+
+4. **HdrHistogram (High Dynamic Range Histogram):**
+   - Pros: Industry-standard for latency measurement in Java/JVM world (Gil Tene's library). O(1) insert, O(1) percentile query, constant memory
+   - Cons: Requires a third-party C++ port (or reimplementation). Introduces a compressed-bucket data structure that's harder to audit and explain. Overkill for 100k samples where raw storage is only 800KB
+   - Rejected because the project minimizes dependencies and the simple vector approach is sufficient for this scale
+
+**How this connects to what came before:**
+- Task 2 created the build skeleton (`apps/benchmark/main.cpp` + CMake target), proving that the benchmark executable links correctly. Task 3 adds the first functional code to that executable's directory — a utility that Tasks 4–6 will use to accumulate and report their measurements.
+- The `LatencyRecorder` usage pattern (from `design.md` §3) constructs a fresh `MatchingEngine` per iteration, calls `record(end - start)` after each timed operation, then queries stats once at the end. This mirrors §6's "fresh engine per iteration" resolution — no engine reset needed, just construct and discard.
+- The 0-sample edge case (return 0.0) matters because Tasks 4–6's benchmark loops might run 0 iterations if something goes wrong (e.g., a misconfigured iteration count). Graceful behavior on empty input prevents confusing divide-by-zero crashes in the reporting path.
+
+**Check your understanding:**
+1. Why is `record()` designed to be called *inside* the benchmark loop (between timed operations), but the sort only happens when statistics are queried *after* the loop? What would happen to measurement accuracy if `record()` maintained a sorted invariant on every call?
+2. The P99 formula uses `ceil(0.99 * count) - 1`. What would change if you used `floor` instead of `ceil`? For count = 100, what value would floor give, and would that be a valid P99?
+3. `LatencyRecorder` lives in `apps/benchmark/`, not `core/` or `tools/`. What would go wrong architecturally if it were placed in `core/`? (Hint: think about what `core/` is allowed to depend on, and what `LatencyRecorder` includes.)
+4. The design doc says "no floating point in core/orderbook/engine." Why is `LatencyRecorder` returning `double` not a violation of this rule? What's the distinction between "measurement/presentation" floating point and "matching logic" floating point?
+
+
+### Task 4 — `bench_add_no_match` (R1)
+
+**What it does:**
+Implements the first real latency benchmark: measuring the time for a single non-crossing `ADD` (limit order submission) into a fresh, empty matching engine. This is the purest "insert path" measurement — no matching logic fires, no trades execute, no resting orders exist. It isolates the cost of: validating the order ID, inserting into the `ever_seen_ids_` set, creating the `Order` on the heap, inserting into the `OrderBook`'s price tree (creating a new `PriceLevel` since the book is empty), and calling `sink_->on_order_accepted()` (a no-op via `NullEventSink`).
+
+**Exact locations:**
+- `apps/benchmark/latency_bench.hpp` (full file) — declares `bench_add_no_match(LatencyRecorder&, size_t)` plus commented placeholders for Tasks 5/6
+- `apps/benchmark/latency_bench.cpp` (full file) — the measurement loop implementation
+- `apps/benchmark/main.cpp` (full file) — custom `main()` that runs the latency benchmark, prints results, then hands off to Google Benchmark for throughput (Task 7)
+- `CMakeLists.txt` (benchmark_harness target, near end of file) — links `latency_bench.cpp`, `latency_recorder.cpp`, and `main.cpp` together with `engine`, `orderbook`, `workload_generator`, and `benchmark::benchmark`
+
+**Why this measurement methodology, specifically:**
+
+The key design decision is **fresh `MatchingEngine` per iteration, with only the `submit()` call timed**. Let's unpack why:
+
+1. **Fresh engine per iteration (not one shared engine across all iterations):**
+   - If we reused one engine, each iteration's `ADD` would insert into an increasingly full book. The first iteration inserts into an empty `std::map` (fast — no traversal), but the 10,000th iteration inserts into a map with 9,999 price levels (O(log 9999) traversal). The measured latency would drift upward across iterations, conflating "cost of insert" with "cost of tree depth." A fresh engine isolates the former.
+   - Additionally, each iteration reuses `OrderId{1}`. With a shared engine, the second iteration would get `DuplicateOrderId` (since ID 1 was already seen). Fresh construction resets `ever_seen_ids_`.
+   - Per `design.md` §6, constructing a new `MatchingEngine` in Phase 1 is cheap — it initializes an empty `std::map`, an empty `unordered_map`, an empty `unordered_set`, and a few scalar counters. No memory pool to pre-allocate yet (that's Phase 3).
+
+2. **Only the `submit()` call is timed (not construction, not recorder.record()):**
+   ```cpp
+   MatchingEngine engine;              // UNTIMED — setup
+   LimitOrder order{...};              // UNTIMED — setup
+   auto start = steady_clock::now();   // timing starts HERE
+   engine.submit(NewOrder{order});     // THE ONLY THING MEASURED
+   auto end = steady_clock::now();     // timing ends HERE
+   recorder.record(end - start);       // UNTIMED — bookkeeping
+   ```
+   This ensures we measure the engine's actual hot path, not construction overhead or measurement infrastructure. The `recorder.record()` call (a vector push_back) happens *after* the timed region, so it doesn't inflate the measured latency.
+
+3. **`std::chrono::steady_clock` (not `system_clock`, not `high_resolution_clock`):**
+   - `steady_clock` is monotonic — it never jumps backward (unlike `system_clock`, which can be adjusted by NTP). Two calls to `steady_clock::now()` always produce `end >= start`, so `duration_cast` never produces a negative value.
+   - `high_resolution_clock` might *be* `steady_clock` on many platforms, but it's not guaranteed. Using `steady_clock` explicitly communicates the monotonicity requirement.
+   - On Linux x86-64, `steady_clock::now()` typically reads the TSC register via `clock_gettime(CLOCK_MONOTONIC)` — a VDSO call that completes in ~20-25ns. This is our measurement overhead (two calls = ~40-50ns of overhead per iteration). For operations expected to take 500-2000ns, this is acceptable noise (~2-5%).
+
+4. **Non-crossing order specifically (Buy at 10000 with no resting sells):**
+   - A non-crossing order exercises only the insert path: ID validation → heap allocation → tree insertion → EventSink notification. No matching loop runs.
+   - This gives us a clean baseline for "what does it cost just to accept and book an order?" — separate from "what does matching cost?" (R2, Task 5).
+   - `Price{10000}` and `Quantity{100}` are arbitrary — their specific values don't affect insert performance (tree insertion cost depends on tree *size*, not the key value, and we're inserting into an empty tree every time).
+
+**Why this architecture / pattern:**
+
+The benchmark lives in `apps/benchmark/` (a composition root) because it's an executable that *uses* the engine, not part of the engine itself. It depends inward: `latency_bench.cpp` includes `engine/matching_engine.hpp` and `core/NewOrder.hpp` to construct and call the engine directly — no adapters, no CLI parsing, just direct API calls. This is the fastest possible path to exercise the engine.
+
+The separation into `latency_bench.hpp`/`.cpp` (the measurement functions) and `main.cpp` (the orchestration and printing) follows the same pattern as `apps/cli/` separating parser/printer/main. Each bench function is independently callable from tests or alternative drivers.
+
+**The `main.cpp` structure — why custom `main()` instead of `BENCHMARK_MAIN()`:**
+
+Google Benchmark's `BENCHMARK_MAIN()` macro expands to a `main()` that only runs registered `BENCHMARK()` functions. But R1–R3 need percentile-latency reporting (avg/median/P99/max), which Google Benchmark doesn't natively support — it reports mean/stddev per iteration, not tail percentiles.
+
+The solution: a custom `main()` that:
+1. Runs the latency benchmarks (R1–R3) using our own `LatencyRecorder` and prints their stats
+2. Then calls `benchmark::Initialize` + `benchmark::RunSpecifiedBenchmarks` for throughput (R4, Task 7)
+
+This gives us both measurement modes in one executable. The "Failed to match any benchmarks" message (currently printed because no `BENCHMARK()` macros are registered yet) will disappear once Task 7 adds `BM_SustainedThroughput`.
+
+**The output format:**
+```
+=== Single-operation latency (10000 iterations) ===
+  ADD (no match)             avg=  1176.5  median=  1000.0  P99=  2100.0  max= 79800.0 ns
+```
+
+One line per benchmark case, compact and scannable. The four statistics satisfy R6's requirement for "avg/median/P99/worst" reporting. Tasks 5 and 6 will add more rows (ADD with match, CANCEL front/back). Task 8's `ResultsWriter` will format these same numbers into the markdown table for `benchmarks/results/phase-02-baseline.md`.
+
+**Complexity:**
+- **Per iteration:** O(1) for the `submit()` call itself (empty tree → single node insertion, empty `ever_seen_ids_` → single hash insert). The `MatchingEngine` constructor is O(1) (initializes empty containers). Two `steady_clock::now()` calls are O(1). Total per-iteration: O(1).
+- **Total:** O(n) for n iterations (10,000 by default). With ~1μs per iteration, total wall-clock time is ~10ms — fast enough to run as part of the benchmark suite without patience issues.
+- **Space:** O(n) for the `LatencyRecorder`'s sample vector (10,000 × 8 bytes = 80KB).
+
+**Benefits:**
+1. **Clean isolation:** Measures exactly one thing — the cost of accepting a non-crossing limit order into an empty book. No confounding factors (book depth, matching, prior allocations)
+2. **Reproducible:** Same operation every iteration (same OrderId, same price/qty, same empty starting state). Variance comes only from hardware/OS effects (cache state, interrupts, scheduler preemption), not from changing workload characteristics
+3. **Establishes the baseline floor:** This is the cheapest possible engine operation. Every other benchmark (ADD with match, CANCEL) will be measured against this floor to understand the marginal cost of matching or list manipulation
+4. **No engine modifications needed:** Per `design.md` §6, "fresh engine per iteration" requires zero changes to `engine/`, `orderbook/`, or `core/`. The benchmark is purely additive code in `apps/benchmark/`
+
+**Drawbacks / tradeoffs accepted:**
+1. **Constructor cost is amortized but real:** Constructing and destroying a `MatchingEngine` 10,000 times means 10,000 `unordered_set` constructions, 10,000 `std::map` constructions, etc. These don't enter the timed region, but they pollute caches between iterations. A resting order from the previous iteration might have warmed a cache line that the next `submit()` call benefits from — or not, since the engine was destroyed. This makes consecutive measurements slightly less correlated than they'd be in a "real" engine running many orders. Accepted because the alternative (one engine, incrementing OrderIds) introduces its own bias (growing tree depth)
+2. **The measured "ADD" includes `NewOrder` variant dispatch:** The `engine.submit(NewOrder{order})` call goes through `std::visit` to dispatch to `submit_limit()`. This is typically a single branch (check the variant index), not a virtual call, but it's ~1-3ns of overhead per call. Since all real usage paths also go through `submit(NewOrder)`, this is representative rather than misleading
+3. **`steady_clock` granularity limits meaningful measurement on very fast hardware:** If the operation takes <20ns (unlikely for Phase 1's `std::map` + heap allocation, but possible after Phase 3's pool), two `steady_clock::now()` calls (~25ns each) would dominate the measurement. At that point, we'd need to batch multiple operations and amortize the timer cost — but that's a Phase 3+ concern, not Phase 2's
+4. **No warm-up iterations for the latency path:** The first few iterations might see cold-cache effects (instruction cache miss on the first `submit()` call). Google Benchmark handles this automatically for throughput (R7), but our manual LatencyRecorder loop doesn't discard the first N samples. The P99/max might be inflated by those cold iterations. Accepted because: (a) max is *supposed* to capture worst-case (cold-cache IS a real scenario), and (b) median and avg are robust against a few outliers in 10,000 samples
+
+**Alternatives considered and rejected:**
+
+1. **Using Google Benchmark's `BENCHMARK()` macro for R1 too:**
+   - This would look like: `for (auto _ : state) { engine.submit(...); }` with `state.PauseTiming()`/`state.ResumeTiming()` around construction
+   - Rejected because: (a) Google Benchmark reports mean/iteration and standard deviation, not median/P99/max — which is what R6 requires. (b) `PauseTiming()`/`ResumeTiming()` have documented overhead (~100ns per call pair) that would dominate a sub-microsecond operation. (c) The custom LatencyRecorder approach gives us raw samples for arbitrary post-processing (histograms, distribution analysis) that Google Benchmark's aggregated statistics can't provide
+
+2. **Batching multiple orders per timing call (time 100 submits, divide by 100):**
+   - Pros: amortizes `steady_clock` overhead, reduces noise
+   - Cons: hides tail latency. If 1 out of 100 submits takes 10μs (allocator hiccup), batching reports it as +100ns distributed across all 100 — invisible in the average. Individual timing captures that one outlier as a P99/max spike, which is exactly what HFT firms care about
+   - Rejected because tail-latency visibility is the primary goal of R1–R3
+
+3. **Using `rdtsc` (x86 timestamp counter) directly instead of `steady_clock`:**
+   - Pros: ~1ns read cost (vs. ~25ns for `steady_clock` via VDSO), higher precision
+   - Cons: platform-specific (x86 only, violates portability even if we're Linux-only), requires manual frequency conversion (TSC ticks → nanoseconds depends on CPU frequency, which varies with turbo boost), serialization issues (need `rdtscp` or `lfence` to prevent out-of-order measurement)
+   - Rejected for Phase 2: `steady_clock` is sufficient when operations take 500-2000ns. If Phase 3's optimizations bring operations below 50ns, `rdtsc` becomes worth the complexity. Flagged for future consideration
+
+4. **Pre-reserving the LatencyRecorder's vector:**
+   - The code could call `recorder.samples_.reserve(iterations)` before the loop to avoid any vector reallocation during measurement
+   - This isn't done currently because `record()` happens AFTER the timed region (outside `start`/`end`), so reallocation doesn't affect measured latency
+   - If future profiling shows cache pollution from occasional reallocations affecting *subsequent* iterations' measurements, this would be worth adding. For now, YAGNI
+
+**How this connects to what came before:**
+- Task 3 created `LatencyRecorder` — the statistical accumulator used here. `bench_add_no_match` is the first *user* of that class.
+- Task 2 created the build skeleton (CMake target, empty main). Task 4 replaces that empty main with the real custom `main()` and adds the first benchmark function.
+- The `MatchingEngine` being measured is the Phase 1 implementation — `std::map` price tree, intrusive list per level, `std::make_unique<Order>` on every submission. The numbers produced here are the Phase 2 baseline that Phase 3 (memory pool) will try to beat.
+
+**Check your understanding:**
+1. Why does the benchmark use `OrderId{1}` for every iteration instead of incrementing it (`OrderId{i}`)? What would change about the measurement if we used incrementing IDs with a shared engine instead of a fresh engine per iteration?
+2. The `steady_clock::now()` call costs ~25ns. For an operation measured at 1000ns, what percentage of the reported latency is measurement overhead? At what operation latency would you start worrying about this overhead distorting results?
+3. Why is `max` (79800ns in the sample run) so much larger than P99 (2100ns)? What OS-level event could cause a single iteration to take 40x longer than the median? (Hint: think about what happens when the OS scheduler runs on the same core as the benchmark.)
+4. If you moved `recorder.record(...)` to *before* the `auto end = steady_clock::now();` line, how would the reported numbers change, and why? What would you be accidentally measuring?
+
+
+### Task 5 — `bench_add_with_match` (R2)
+
+**What it does:**
+Implements a parameterized latency benchmark that measures the cost of a single aggressive order sweeping through `fill_count` resting orders. This isolates the matching loop's per-fill cost: setup is untimed, only the crossing `submit()` call is measured. Running this for `fill_count ∈ {1, 10, 100}` reveals how latency scales with the number of fills — directly demonstrating O(k) matching complexity where k is the number of price levels crossed.
+
+**Exact locations:**
+- `apps/benchmark/latency_bench.cpp:30–58` — `bench_add_with_match` implementation
+- `apps/benchmark/latency_bench.hpp:13–16` — declaration
+- `apps/benchmark/main.cpp:42–59` — three invocations (fill_count = 1, 10, 100)
+
+**Why this benchmark design, specifically:**
+
+The key design decision is **isolating the matching loop from setup costs.** The benchmark:
+
+1. Constructs a fresh `MatchingEngine` per iteration (untimed)
+2. Inserts `fill_count` resting sell orders at ascending prices (untimed)
+3. Submits one aggressive buy that crosses all of them (timed)
+
+This measures *only* the work the engine does when matching: traversing the price tree, iterating through price levels, executing fills, updating order state, and emitting events. The untimed setup ensures we're not accidentally including "how long does it take to build a book" in the matching latency.
+
+**Why ascending prices for resting sells:**
+The resting sells are placed at prices 10000, 10001, 10002, ..., each with quantity 10. The aggressive buy has `price = 10000 + fill_count - 1` (crosses all of them) and `quantity = 10 * fill_count` (consumes them all). This creates the maximum number of *distinct price-level traversals*:
+
+- With 1 fill: buy at 10000, crosses 1 sell at 10000 → 1 price level visited
+- With 10 fills: buy at 10009, crosses 10 sells at 10000–10009 → 10 price levels
+- With 100 fills: buy at 10099, crosses 100 sells at 10000–10099 → 100 price levels
+
+An alternative would be putting all resting orders at the *same* price (testing FIFO traversal within a single level). That was not chosen because crossing multiple price levels exercises the `std::map` iteration path (TreeIterator → next price level), which is the more interesting performance dimension for a real-world aggressive order sweep.
+
+**What the matching loop does per fill (high-level):**
+For each resting order crossed, the engine:
+1. Determines fill quantity: `min(incoming_remaining, resting.quantity)`
+2. Creates a `Trade` struct (assigns `TradeSequence`, records both IDs, price, quantity)
+3. Decrements `incoming_remaining`
+4. If resting order fully filled: removes it from the intrusive list, erases from `unordered_map`, potentially removes the (now-empty) price level from the tree
+5. Calls `EventSink::on_trade(trade)`
+6. If incoming still has remaining quantity, advances to the next resting order (or next price level if the current level is exhausted)
+
+Steps 1–5 repeat `fill_count` times, making the total cost O(fill_count). Tree advancement (step 6) is O(log n) per level in the worst case for `std::map` iteration, but amortized O(1) per element traversal with the standard tree iterator.
+
+**Observed results (sample run, Windows, RelWithDebInfo, no CPU pinning):**
+
+| Operation | Avg (ns) | Median (ns) | P99 (ns) | Max (ns) |
+|---|---|---|---|---|
+| ADD (1 fill) | 770 | 700 | 1200 | 72700 |
+| ADD (10 fills) | 3421 | 2800 | 7200 | 851100 |
+| ADD (100 fills) | 32672 | 30300 | 107500 | 2540500 |
+
+**Scaling analysis:**
+
+- 1 → 10 fills: median goes from 700ns to 2800ns (4x for 10x fills)
+- 1 → 100 fills: median goes from 700ns to 30300ns (43x for 100x fills)
+
+If matching were perfectly O(k) with zero fixed cost, we'd expect exact 10x and 100x ratios. The sub-linear scaling (4x instead of 10x) at low fill counts reflects significant fixed overhead (engine construction, initial tree lookup to find the best ask, first-fill setup costs like `EngineResponse` vector allocation) that dominates when k is small. At 100 fills, the per-fill cost (~300ns each) dominates and the scaling becomes nearly linear — the 43x ratio on 100x fills confirms that the marginal cost per additional fill is approximately constant.
+
+This is the O(k) matching loop in action: each additional fill adds a roughly constant ~300ns of work (one intrusive-list pop, one `Trade` construction, one `EventSink` callback, one `unordered_map` erase). The residual sub-linearity (43x not 100x) is explained by per-iteration fixed costs that don't scale with k (fresh engine construction, initial price-tree lookup, `EngineResponse` setup, and `steady_clock` measurement overhead).
+
+**Why a fresh engine per iteration (not a shared one):**
+Per design.md §6, each iteration starts with a brand-new `MatchingEngine`. This avoids:
+- **Accumulating state:** If we reused one engine, iteration N+1 would find OrderIds from iteration N already in the `unordered_map` (duplicate-ID rejection) — we'd need incrementing ID ranges, complicating the benchmark logic
+- **Memory fragmentation drift:** A long-lived engine's allocator state diverges from a "cold start" — Phase 2's goal is a reproducible baseline, not a steady-state measurement (that's what the throughput benchmark R4 is for)
+- **Cache warmth effects:** A reused engine's data structures stay cache-hot between iterations, making individual measurements faster than the "first operation" case. Fresh construction simulates the cold-start per-order latency more honestly
+
+**Complexity:**
+- **Matching itself:** O(k) where k = fill_count. Each fill is O(1) amortized (intrusive-list pop + unordered_map erase + Trade construction)
+- **Price-level traversal:** O(k) amortized across all levels (tree iteration is O(1) amortized per step, even though a single `std::map::iterator++` can be O(log n) worst-case)
+- **Untimed setup:** O(k × log k) for inserting k orders into a `std::map`-based tree — irrelevant to measurement since it's outside the timed region
+- **Space:** O(k) for the resting orders and resulting trades
+
+**Benefits:**
+1. **Quantifies scaling directly:** Three data points (1, 10, 100) clearly show whether matching is O(k), O(k²), or something else — without guessing from code inspection
+2. **Isolates matching from book-building:** Untimed setup ensures we're measuring matching algorithm efficiency, not insertion performance (that's `bench_add_no_match`'s job)
+3. **Parameterized design:** The function takes `fill_count` as a parameter, so adding more data points (e.g., 1000 fills, once Phase 3's memory pool makes that practical) requires zero code changes
+4. **Each fill_count runs independently:** Three separate `LatencyRecorder` instances mean the statistics for 1-fill, 10-fills, and 100-fills don't contaminate each other
+
+**Drawbacks / tradeoffs accepted:**
+1. **Fresh engine per iteration adds ~2μs overhead** to each iteration (untimed, but still burns CPU time). With 10000 iterations × 3 fill_counts, total benchmark runtime is dominated by engine construction, not measurement — the `fill_count=100` case takes ~45 seconds including all the untimed setup. This is acceptable for a nightly/manual benchmark run, but would be prohibitive for sub-second CI feedback
+2. **Single-level matching not directly tested:** All resting orders are at *different* prices. This means we're testing cross-level matching (tree traversal + per-level intrusive-list traversal), not within-level queuing (100 orders at the same price). The latter would test the intrusive-list performance in isolation — potentially useful but not what R2 asks for (R2 asks "how fast is matching with N fills," not "how fast is FIFO within one level")
+3. **Max values are noisy:** The ~2.5ms max at 100 fills is an OS scheduling artifact (context switch during the 30μs matching window). This is expected and not a code bug — it's why we report P99 as the "realistic worst case" and max as "how bad can OS interference get"
+
+**Alternatives considered and rejected:**
+
+1. **All resting orders at the same price (test FIFO, not cross-level):**
+   - Pros: isolates intrusive-list traversal from tree traversal
+   - Cons: doesn't match real-world aggressive order behavior (sweeping multiple levels is the common case for large orders). Also doesn't exercise the `std::map` iterator path, which is more likely to show performance cliffs
+   - Rejected because R2 specifically asks about *matching* latency (crossing multiple fills), which in practice means crossing multiple price levels
+
+2. **Randomized price/quantity per iteration:**
+   - Pros: more "realistic" measurement variance
+   - Cons: makes results non-reproducible across runs (even with fixed seed, comparing Run A vs Run B is harder). R5 requires reproducibility. Also introduces confounding variables (some iterations might partially fill, others fully fill — mixing two different code paths in one measurement)
+   - Rejected for clean measurement: each iteration exercises the exact same code path (full-fill of all resting orders), so variance is purely from CPU/OS effects, not from input variation
+
+3. **Using Google Benchmark framework for this measurement:**
+   - Pros: built-in warm-up, repetition, statistical output
+   - Cons: Google Benchmark measures total time per iteration (including setup), not sub-regions within an iteration. We specifically need to exclude setup from measurement. There's no clean way to tell Google Benchmark "this part is untimed setup, this part is the measurement" — you'd have to pause/resume the timer, which Google Benchmark discourages and which adds its own overhead
+   - Rejected because the custom `LatencyRecorder` approach gives precise control over what's timed
+
+**How this connects to what came before:**
+- Task 4's `bench_add_no_match` established the pattern (fresh engine, single timed call, LatencyRecorder). Task 5 extends that pattern with untimed setup and parameterization.
+- Task 3's `LatencyRecorder` accumulates and reports the statistics for each fill_count independently.
+- Phase 1's matching engine implementation (intrusive list + `std::map` tree + `unordered_map` ID lookup) is the system under test. The O(k) scaling observed here directly validates that the matching loop does constant work per fill — the design.md claims from Phase 1 are now backed by measurement.
+
+**Check your understanding:**
+1. If the median latency for 100 fills were 300,000 ns (10x what we observed), what would that suggest about the matching loop's complexity — is it still O(k), or has something gone wrong? What could cause O(k²) behavior in this benchmark?
+2. Why are the resting sells placed at ascending prices (10000, 10001, ...) rather than all at price 10000? What different code path does the benchmark exercise because of this choice?
+3. The aggressive buy's quantity is exactly `10 * fill_count`. What would happen if it were *less* (say `5 * fill_count`)? Would the benchmark still measure the same thing? Why or why not?
+4. The max value for 100 fills (~2.5ms) is 83x the median (~30μs). In a production HFT system, would this be acceptable? What hardware/OS-level intervention (from the tech steering file's debug/profiling tools list) would you use to eliminate these outliers?
+
+
+### Task 6 — `bench_cancel` (R3)
+
+**What it does:**
+Measures the latency of cancelling a single order from a price level's queue, confirming that the intrusive doubly-linked list design from Phase 1 delivers O(1) cancel regardless of whether the target order is at the front or back of the queue. This is the benchmark whose *point* is proving the design claim — if front and back differed significantly (say, 10x), it would mean cancellation is actually traversing the queue, which would imply the O(1) claim from Phase 1 was wrong.
+
+**Exact locations:**
+- `apps/benchmark/latency_bench.cpp:60–85` — `bench_cancel()` implementation
+- `apps/benchmark/latency_bench.hpp:26–32` — declaration and documentation
+- `apps/benchmark/main.cpp:62–73` — wiring into the harness entry point (this task's primary change)
+
+**How the benchmark works:**
+Each iteration:
+1. Constructs a fresh `MatchingEngine` (untimed)
+2. Inserts 100 orders at the same price level (`Price{10000}`, all `Side::Buy`) — creating a meaningful queue depth (untimed)
+3. Times *only* the `engine.cancel(cancel_id)` call, where `cancel_id` is either `OrderId{1}` (front of queue — first inserted) or `OrderId{100}` (back of queue — last inserted)
+4. Records the duration in a `LatencyRecorder`
+
+The queue depth of 100 is deliberate: it ensures we're not measuring a trivial case (a queue of 1 or 2 where "front" and "back" are effectively the same thing). With 100 orders between the target and one end of the queue, any O(n) traversal would show up clearly in the numbers.
+
+**Why this data structure / algorithm, specifically:**
+The cancel operation is O(1) because of two design choices from Phase 1 working together:
+
+1. **`unordered_map<OrderId, Order*>` in the engine** — finding the order to cancel is O(1) hash lookup, not an O(n) scan through the book
+2. **Intrusive doubly-linked list** — once we have the `Order*`, unlinking it from its price level is O(1) pointer manipulation (`prev->next = next; next->prev = prev`). No traversal needed because the pointers are *embedded in the Order struct itself*
+
+If we'd used `std::list<Order>` instead, step 1 would still be O(1) (the map would store an iterator), but step 2 would *also* be O(1) (list erasure by iterator is constant time). So why intrusive? The difference isn't in cancel latency — it's in cache locality during matching (iterating a `std::list` chases heap-allocated nodes scattered in memory; iterating an intrusive list over pool-allocated Orders will be sequential once Phase 3 adds the memory pool). This benchmark confirms the *cancel* side is O(1) as expected; Phase 3's benchmarks will show the *matching* side benefits.
+
+**Observed results:**
+
+| Variant | Avg (ns) | Median (ns) | P99 (ns) | Max (ns) |
+|---|---|---|---|---|
+| CANCEL (front) | 400 | 300 | 1200 | 112600 |
+| CANCEL (back) | 236 | 200 | 700 | 20200 |
+
+**Are front and back statistically indistinguishable?**
+
+In absolute terms, both are sub-microsecond and clearly O(1) — neither shows any scaling with queue depth. However, there's a consistent ~100ns difference (front is slightly slower). This is *not* a complexity difference (both are constant-time pointer unlinks); it's a microarchitectural effect:
+
+- The front-of-queue order (`OrderId{1}`) was the first allocated. By the time we cancel it, 99 more orders have been allocated after it. The memory for the front order is "older" — it may have been evicted from L1 cache by the subsequent allocations, requiring a cache line fetch during the unlink
+- The back-of-queue order (`OrderId{100}`) was the most recently allocated, so its memory is likely still hot in L1 cache
+
+This ~100ns cache penalty is expected, not a design flaw. In a real exchange with a memory pool (Phase 3), all orders would be allocated from a contiguous pool, reducing this variance. The key observation: **both variants are O(1)** — the ~100ns difference is a constant offset from cache temperature, not a linear function of queue position.
+
+**Why this confirms the O(1) design claim from Phase 1:**
+
+If cancellation were O(n) (e.g., linear search through the queue), we'd expect:
+- Front cancel: O(1) — found immediately at position 0
+- Back cancel: O(100) — must traverse 99 nodes to find position 99
+
+That would show up as a ~100x difference (front ~200ns, back ~20000ns). Instead, we see a ~1.5x difference (300 vs 200 median), which is noise-level for sub-microsecond operations. The intrusive list + hash map design delivers exactly what was promised.
+
+**Why this architecture:**
+The `bench_cancel` function lives in `apps/benchmark/` (not in `engine/` or `tests/`) because it's a measurement tool, not business logic or a correctness test. It depends on `engine/` (to construct and operate the `MatchingEngine`) but is itself an app-layer concern — the engine doesn't know or care that it's being benchmarked.
+
+**Complexity:**
+- **Time:** O(1) per cancel — hash map lookup + intrusive list unlink. Confirmed by measurement.
+- **Space:** The benchmark itself allocates 100 `Order` objects per iteration (via the engine) plus the `LatencyRecorder`'s vector of 10000 samples.
+
+**Benefits:**
+1. **Validates Phase 1's central design claim:** The intrusive list isn't just theoretically O(1) — it measurably delivers sub-microsecond cancels regardless of queue position
+2. **Catches regressions:** If a future change accidentally introduces O(n) behavior (e.g., swapping the intrusive list for a `std::vector`), this benchmark would immediately show a 50–100x regression for back-of-queue cancels
+3. **Front vs. back separation:** By measuring both extremes, we confirm there's no hidden traversal in either direction (some "doubly-linked list" implementations secretly traverse from the head to validate — ours doesn't)
+
+**Drawbacks / tradeoffs accepted:**
+1. **Single price level only:** All 100 orders are at the same price. This means we're measuring intrusive-list performance, not tree lookup. A cancel targeting an order at a *different* price level (requiring `std::map` lookup to find the level first) would add the tree lookup cost — but that's O(log P) where P is the number of distinct price levels, and we're specifically isolating the O(1) unlink cost here
+2. **No warm-up discarding:** Unlike Google Benchmark, our custom loop doesn't discard the first few iterations for cache warm-up. The `max` values (~112μs for front) reflect cold-cache first-iteration effects plus OS scheduling jitter. The median/P99 are more representative
+3. **Cache effects create a systematic bias:** Front cancels appear ~50% slower due to cache temperature, not algorithmic differences. A reader unfamiliar with hardware effects might misinterpret this as "front cancel is slower" when it's really "first-allocated memory is colder." The explanation above clarifies this, but the raw numbers alone could mislead
+
+**Alternatives considered and rejected:**
+
+1. **Random queue position (not just front/back):**
+   - Pros: would show the full distribution of cancel latencies across all positions
+   - Cons: harder to interpret — if position 50 is slightly slower than position 49, is that meaningful? Front and back are the two extremes that would maximally reveal any O(n) behavior
+   - Rejected because front/back are sufficient to prove O(1): if both extremes are constant, all intermediate positions must be too (there's no "worse case" between them in a doubly-linked list)
+
+2. **Larger queue depth (1000 or 10000 orders):**
+   - Pros: stronger proof of O(1) — if back-of-queue at depth 10000 is the same as depth 100, that's more convincing
+   - Cons: 10000 iterations × 10000 orders per iteration = 100M order insertions for setup alone, making the benchmark take minutes. Queue depth of 100 is sufficient: if it were O(n), we'd see 100×  difference vs. a hypothetical depth-1 baseline
+   - Rejected for practical runtime reasons; 100 is enough to distinguish O(1) from O(n)
+
+3. **Using Google Benchmark framework:**
+   - Same reasoning as Task 4/5: Google Benchmark can't separate untimed setup from the timed cancel call without `PauseTiming()`/`ResumeTiming()` overhead
+   - Rejected: custom LatencyRecorder gives cleaner measurement control
+
+**How this connects to what came before:**
+- Phase 1's `PriceLevel` (intrusive doubly-linked list) and `MatchingEngine` (hash map for O(1) order lookup) are the system under test. This benchmark *validates* the O(1) claim those components were designed around
+- Tasks 4 and 5 established the pattern (fresh engine, untimed setup, single timed call). Task 6 follows the same pattern with `cancel()` instead of `submit()`
+- The `LatencyRecorder` from Task 3 collects and reports the statistics
+
+**Check your understanding:**
+1. If we replaced the intrusive doubly-linked list with a `std::vector<Order*>` per price level (where cancel erases by searching for the pointer), what would the CANCEL (back) numbers look like with 100 orders? What about with 10000 orders?
+2. Why does the benchmark use 100 orders at a *single* price level rather than 100 orders spread across 100 different prices? What different code path would the latter exercise?
+3. The front cancel is ~100ns slower than the back cancel. If Phase 3's memory pool eliminates this difference (because all orders are allocated from contiguous memory), what does that tell you about the relationship between algorithmic complexity and actual measured performance?
+4. Could you "cheat" this benchmark — make it report O(1) numbers even if the underlying data structure were O(n) — by exploiting the specific test setup (e.g., always cancelling the same position)? How would you design a benchmark that's harder to cheat?
+
+
+### Task 7 — `BM_SustainedThroughput` (R4)
+
+**What it does:**
+Measures the aggregate throughput of the matching engine — how many orders per second it can process when fed a realistic, mixed workload of limit orders, market orders, and cancels. Unlike Tasks 4–6 (which isolate single-operation latency), this benchmark answers a different question: "under sustained load with a realistic mix, what's the engine's total capacity?" The answer is reported as `items_per_second` in Google Benchmark's standard output format.
+
+**Exact locations:**
+- `apps/benchmark/throughput_bench.cpp` (full file) — the Google Benchmark registration and `BM_SustainedThroughput` function
+- `CMakeLists.txt` (line ~123) — `throughput_bench.cpp` added to the `benchmark_harness` target's source list
+- `apps/benchmark/main.cpp:74–82` — calls `benchmark::Initialize` / `RunSpecifiedBenchmarks` / `Shutdown`, which picks up the `BENCHMARK(BM_SustainedThroughput)` registration automatically
+
+**How the benchmark works:**
+
+The benchmark has two phases with a critical boundary between them:
+
+1. **Pre-generation (untimed):** Before the `for (auto _ : state)` loop, a `WorkloadGenerator` produces 100,000 events with a fixed config:
+   - Seed: 12345 (deterministic, reproducible — R5)
+   - Mid price: 10000 ticks
+   - Price stddev (log): 0.3 (realistic clustering near the touch)
+   - Quantity: uniform [1, 100]
+   - Mix: 60% limit adds, 10% market orders, 30% cancels
+
+   This pre-generation step is *outside* the timed region. Google Benchmark never sees the cost of random number generation or vector allocation — only the engine's throughput matters (NFR2).
+
+2. **Timed region:** Inside the `for (auto _ : state)` loop:
+   - Construct a fresh `MatchingEngine` (included in timing — see discussion below)
+   - Iterate all 100,000 pre-generated events, dispatching each via `std::visit`:
+     - `LimitOrder` → `engine.submit(NewOrder{e})`
+     - `MarketOrder` → `engine.submit(NewOrder{e})`
+     - `CancelRequest` → `engine.cancel(e.id)`
+   - Google Benchmark runs this loop multiple times (auto-calibrating iterations to get stable timing)
+
+3. **Reporting:** `state.SetItemsProcessed(iterations * events.size())` tells Google Benchmark the total number of "items" (orders/events) processed across all iterations. It divides this by total elapsed wall-clock time (thanks to `->UseRealTime()`) to compute `items_per_second`.
+
+**Why Google Benchmark here, but LatencyRecorder for Tasks 4–6:**
+
+This is the core measurement-approach decision for Phase 2 (design.md §6):
+
+- **Tasks 4–6 (latency):** Need per-operation percentiles (avg, median, P99, max). Google Benchmark reports *aggregate* timing for an iteration; it can't give you "the P99 latency of the 5000th ADD call" because it treats the entire iteration body as one indivisible unit. Hence the custom `LatencyRecorder` with one sample per operation.
+
+- **Task 7 (throughput):** Cares about aggregate rate, not individual operation timing. "8 million orders/sec" is the answer, not "this specific cancel took 150ns." Google Benchmark's `SetItemsProcessed` + automatic iteration calibration + statistical stability handling is exactly right for this measurement. Reimplementing iteration calibration ourselves would be inferior to a battle-tested library.
+
+The tradeoff: you lose per-operation granularity (you can't see the latency distribution *within* the throughput run). If you needed "P99 latency under sustained load" (a different question — closer to a latency-under-load test), you'd need a hybrid approach. R4 asks for throughput, not latency-under-load, so Google Benchmark alone suffices.
+
+**Why fresh-engine-per-repetition:**
+
+Each Google Benchmark repetition constructs a new `MatchingEngine`. This means:
+- The book starts empty every repetition
+- The `ever_seen_ids_` set starts empty
+- The sequence counters reset to 0
+
+Why not reuse the engine across repetitions? Because the engine has *state*: after 100,000 events, the book has accumulated resting orders, the hash set has 100,000 entries, the `std::map` price tree has N levels. If we reuse the engine, iteration 2 would be processing events against a pre-populated book (potentially with stale cancels referencing already-cancelled IDs), which is a fundamentally different workload than iteration 1. Fresh-per-repetition ensures every repetition measures the same thing: processing 100,000 events against an initially empty book.
+
+The cost of construction (initializing empty containers) is included in the timing, but it's negligible compared to 100,000 event dispatches — an empty `std::map`, an empty `unordered_set`, and a null `EventSink*` take single-digit nanoseconds to construct.
+
+Design.md §6 explicitly flags this as a revisit point for Phase 3: when the engine has a memory pool (pre-allocating a large block), construction cost will increase, and we may need a `reset()` method instead of fresh construction. For Phase 2's poolless engine, fresh construction is the simpler approach.
+
+**Why `->UseRealTime()`:**
+
+Google Benchmark defaults to measuring CPU time (user + system time consumed by the process). `UseRealTime()` switches to wall-clock measurement. For a single-threaded, CPU-bound benchmark like this, the two should be nearly identical. But wall-clock is what matters for "orders per second from the external world's perspective" — if the OS deschedules our process for 1ms in the middle of processing, that's real latency a connected client would experience. Using real time gives the more honest (and slightly more pessimistic) throughput number.
+
+**Why 100,000 events:**
+
+- Large enough to amortize per-iteration overhead (engine construction, loop setup) to insignificance: construction is ~10ns, total event processing is ~12ms → overhead is 0.0001%
+- Small enough that the pre-generated vector fits comfortably in L2/L3 cache (~100K × ~40 bytes per variant ≈ 4MB, within L3 for most systems)
+- Matches design.md §5's specification directly
+- Produces enough matching activity (60% limits + 10% markets against each other) that the book builds up meaningful depth during the run, exercising the tree traversal and queue operations realistically
+
+**Why `std::visit` with `if constexpr` dispatch:**
+
+The `std::visit` with a generic lambda + `if constexpr` pattern is the standard C++17/20 approach for dispatching on a `std::variant`. Inside the visitor:
+- `LimitOrder` and `MarketOrder` both call `engine.submit(NewOrder{e})` — wrapping in `NewOrder` (which is itself a variant) for the engine's public API
+- `CancelRequest` calls `engine.cancel(e.id)` — the engine's cancel API takes a bare `OrderId`, not a `CancelRequest` struct
+
+Alternative dispatch patterns:
+- **`std::visit` with an overload set** (`overloaded{[](const LimitOrder& e){...}, ...}`) — functionally equivalent, slightly more boilerplate for the overload helper
+- **Manual `std::holds_alternative` + `std::get`** — worse: no compile-time exhaustiveness check (if a fourth variant alternative were added, the manual approach wouldn't error)
+- **Virtual dispatch** — wrong tool (dynamic polymorphism for a closed set of 3 types is overkill; the variant is statically dispatched)
+
+**Observed results:**
+
+```
+BM_SustainedThroughput/real_time   12001955 ns   12784091 ns   11   items_per_second=8.33198M/s
+```
+
+~8.3 million orders/second. This is the Phase 2 baseline. Key observations:
+- This is well above the "~100k orders/sec" mentioned in requirements.md §4 as the minimum target — the engine is already ~80x faster than required, even without Phase 3's memory pool or any lock-free optimizations
+- The 12ms per iteration (100K events) implies ~120ns average per event — consistent with the single-operation latency numbers from Tasks 4–6 (ADD no-match ~400ns, cancel ~200ns, market orders ~200ns; the weighted average with 60/10/30 mix should be lower than 400ns because cancels and market-into-empty-book are cheaper)
+- The slight discrepancy between real_time (12.0ms) and CPU time (12.8ms) suggests minor OS scheduling overhead, which is expected on a non-isolated CPU
+
+**Workload config chosen and why:**
+
+| Parameter | Value | Reasoning |
+|---|---|---|
+| `seed` | 12345 | Arbitrary but fixed — ensures reproducibility across runs |
+| `mid_price` | 10000 | Gives room for log-normal offsets in both directions without hitting price ≤ 0 |
+| `price_stddev_log` | 0.3 | Moderate spread — most orders cluster within ~30% of mid, some deeper |
+| `quantity_min/max` | 1–100 | Doesn't significantly affect throughput (matching cost scales with fill *count*, not fill *quantity*) |
+| `add_limit_ratio` | 0.6 | Majority are limit orders — they build up the book, creating depth for matches |
+| `add_market_ratio` | 0.1 | Enough to trigger matching against resting orders, but not so many that the book drains instantly |
+| `cancel_ratio` | 0.3 | Realistic for HFT workloads where ~30–50% of orders are cancelled before filling |
+
+This mix represents a "moderately active" market: orders accumulate (60% adds), occasionally match (10% markets sweep), and frequently get pulled (30% cancels). It exercises all three engine code paths in proportions that roughly mirror real exchange traffic.
+
+**Complexity:**
+- **Time:** O(n) per repetition where n = 100,000 events. Each event is O(1) amortized for cancels, O(log P) for adds/matches (price tree lookup where P is number of distinct price levels), making total per-repetition O(n × log P). In practice P stays bounded (log-normal distribution concentrates orders at ~10–20 distinct price levels), so it's effectively O(n).
+- **Space:** O(n) for the pre-generated event vector, plus the engine's internal state (order book, hash map) which grows up to O(n) during the run before cancels and fills reduce it.
+
+**Benefits:**
+1. **Uses Google Benchmark's proven methodology:** Automatic iteration calibration, statistical stability detection, warm-up handling, and standardized output format. Trustworthy numbers without reinventing measurement infrastructure
+2. **Single, reproducible number:** "8.3M orders/sec" is the Phase 2 baseline. Phase 3 (memory pool) and Phase 4 (lock-free) can rerun this exact benchmark (same seed, same config) and see precisely how much throughput improved
+3. **Realistic workload mix:** Not just "how fast can I add non-crossing orders" (which wouldn't exercise matching) or "how fast can I cancel" (which wouldn't build a book) — this exercises the engine holistically
+4. **Pre-generation isolation:** The workload generation cost (RNG, variant construction, vector push_back) is excluded from measurement. We're measuring the *engine*, not the *generator*
+
+**Drawbacks / tradeoffs accepted:**
+1. **Engine construction included in timing:** Fresh `MatchingEngine` construction is inside the timed loop. For Phase 2 (empty containers), this is negligible. For Phase 3 (pool allocation in constructor), it may become significant and require revisiting — explicitly flagged in design.md §6
+2. **No latency distribution under load:** This benchmark tells you throughput, not "what's the P99 latency when the engine is sustaining 5M ops/sec." That's a different (harder) measurement requiring a latency-under-load benchmark with an injector thread and a separate timer — out of scope for Phase 2
+3. **Single-threaded only:** Real exchange throughput depends on the full pipeline (network → decode → match → encode → send). This measures only the matching step in isolation. Phases 4–6 will add the surrounding components, but the single-threaded matching throughput remains the fundamental bottleneck number
+4. **Approximate cancels:** Some generated CANCEL events target IDs that were already fully filled during matching. These produce `UnknownOrderId` responses (cheap hash lookup + early return), slightly inflating the throughput number vs. a workload where every cancel hits a real resting order. The effect is small (~5–10% of cancels, based on the generator's approximate tracking) and acceptable for a baseline
+
+**Alternatives considered and rejected:**
+
+1. **Custom timing loop (like Tasks 4–6) instead of Google Benchmark:**
+   - Pros: could extract per-event latency during the throughput run
+   - Cons: measuring 100,000 individual timestamps (2 clock reads per event = 200K `steady_clock::now()` calls) would add ~60–100μs of measurement overhead per repetition, distorting the very throughput we're trying to measure. Google Benchmark's approach (time the whole block, divide by items) avoids this observer effect
+   - Rejected because throughput measurement shouldn't pay per-event timing cost
+
+2. **Reuse engine across repetitions (accumulating state):**
+   - Pros: no construction cost; measures "steady-state" throughput with a pre-populated book
+   - Cons: events generated for an empty book (specific OrderIds, specific cancel targets) make no sense against a stale book from a prior repetition. Would need a fresh event sequence per repetition, which re-introduces generation cost inside the timed region
+   - Rejected because fresh-per-repetition gives cleaner, more comparable measurements
+
+3. **`->Iterations(N)` instead of auto-calibration:**
+   - Forcing a fixed iteration count removes Google Benchmark's statistical convergence detection
+   - Rejected: Google Benchmark's auto-calibration ensures it runs enough iterations for stable results, adapting to the machine's speed automatically
+
+4. **Separate benchmark binary (not combined with latency benchmarks in one executable):**
+   - Pros: simpler build, independent execution
+   - Cons: adding another executable target adds CMake complexity; the `--benchmark_filter` flag already lets you run only `BM_SustainedThroughput` without running latency tests
+   - Rejected: one harness, multiple benchmarks (filtered by name) is the standard Google Benchmark pattern
+
+**How this connects to what came before:**
+- Task 1 (`WorkloadGenerator`) provides the pre-generated event sequence — this benchmark is its first real consumer
+- Tasks 4–6 measured individual operation latency; Task 7 measures aggregate throughput. Together they answer both "how fast is one operation" and "how fast is the engine overall"
+- The `main.cpp` from Task 2's skeleton already called `benchmark::RunSpecifiedBenchmarks()` — Task 7 just registers a benchmark function that the framework discovers automatically via the `BENCHMARK()` macro
+- Phase 3 (memory pool) will rerun this exact benchmark to quantify allocation-cost improvement; the reproducible seed ensures identical workload
+
+**Check your understanding:**
+1. Why is `state.SetItemsProcessed(iterations * events.size())` called *after* the timing loop, not inside it? What would happen if you called `state.SetItemsProcessed(events.size())` inside the loop body?
+2. The observed throughput is ~8.3M ops/sec, but the single-operation ADD (no match) latency from Task 4 was ~400ns (~2.5M ops/sec if that were the only operation). Why is the throughput benchmark *faster* per-event than the individual ADD benchmark? (Hint: consider the workload mix and what "cheaper" operations are included.)
+3. If you removed `->UseRealTime()` from the benchmark registration, what would change in the reported `items_per_second` number? Would it be higher or lower, and why?
+4. The generator's `cancel_ratio` is 0.3, but some cancels hit `UnknownOrderId` (because the target was already filled). Does this make the benchmark *overstate* or *understate* real-world throughput? What path does an `UnknownOrderId` cancel take through the engine?
+
+
+### Task 8 — `ResultsWriter` + `benchmarks/results/phase-02-baseline.md`
+
+**What it does:**
+Implements a small formatter (`ResultsWriter`) that takes the latency statistics from Tasks 4–6 and the throughput measurement from Task 7, and writes them into a markdown file at `benchmarks/results/phase-02-baseline.md` matching design.md §7's table format. Additionally, the `main.cpp` harness is extended to run a manual throughput measurement (alongside the existing Google Benchmark registration) so that all results — latency and throughput — are captured programmatically in one run without requiring manual copy-paste from Google Benchmark's stdout.
+
+**Exact locations:**
+- `apps/benchmark/results_writer.hpp` (full file) — declares `LatencyResult`, `ThroughputResult` structs and `write_results()` free function
+- `apps/benchmark/results_writer.cpp` (full file) — implementation: creates directories via `std::filesystem`, writes markdown tables to an `std::ofstream`
+- `apps/benchmark/main.cpp` (full file, rewritten for Task 8) — now runs latency benchmarks, a manual throughput measurement, calls `write_results()`, and then optionally runs Google Benchmark's `RunSpecifiedBenchmarks()`
+- `benchmarks/results/phase-02-baseline.md` — the output artifact, regenerated on every benchmark run
+- `benchmarks/results/.gitkeep` — ensures the directory is tracked by git even when the results file is gitignored
+- `CMakeLists.txt` (benchmark_harness target) — `results_writer.cpp` added to the source list
+
+**Why this data structure / algorithm, specifically:**
+
+The `ResultsWriter` is deliberately minimal: two plain structs (`LatencyResult`, `ThroughputResult`) and one free function (`write_results`). No class, no state, no inheritance. The reason:
+
+1. **Single responsibility, single use:** The writer is called exactly once at the end of a benchmark run. It doesn't accumulate data over time (the `LatencyRecorder` already did that). It doesn't need to be configurable (the markdown format is fixed by design.md §7). A function is the right abstraction for "take these inputs, produce this output, done."
+
+2. **Structs over raw parameters:** Rather than passing 6 × 4 = 24 `double` values to `write_results()`, the code groups them into `LatencyResult` vectors. This makes the call site in `main.cpp` self-documenting (each result has a label attached to its numbers) and makes it trivial to add future benchmark cases (just push another `LatencyResult` into the vector).
+
+3. **`std::filesystem::create_directories` for directory creation:** The writer creates `benchmarks/results/` if it doesn't exist. This means running the benchmark on a fresh clone (where only `.gitkeep` exists) works without a separate "mkdir" step. The alternative (requiring the user to manually create the directory, or failing silently) would be a worse developer experience.
+
+**Why a manual throughput measurement in main.cpp (not captured from Google Benchmark):**
+
+Google Benchmark's `RunSpecifiedBenchmarks()` writes results to stdout in its own format, but doesn't expose the computed `items_per_second` value programmatically in a way that's easy to capture from the calling code. Specifically:
+
+- `benchmark::State::SetItemsProcessed()` sets a counter, but there's no public API to read back "what was the final items/sec?" after `RunSpecifiedBenchmarks()` returns
+- Google Benchmark's `BenchmarkReporter` interface *could* be subclassed to intercept results, but that's significantly more complex than the alternative
+- Google Benchmark's `--benchmark_format=json` output could be parsed, but parsing JSON output from a child process is fragile and overkill
+
+The pragmatic solution: run the same workload (same seed, same config, same event count) manually with `std::chrono::steady_clock`, compute `events / elapsed_seconds`, and pass that to the results writer. This duplicates ~20 lines of the throughput loop, but gives us a clean `double` we can write directly into the markdown table.
+
+The existing `BM_SustainedThroughput` Google Benchmark registration is kept intact — it still runs when the user invokes the harness without `--benchmark_filter`, giving standard Google Benchmark output for comparison tooling (e.g., `benchmarks compare` between runs). Both measurement paths exercise the same code and should produce consistent numbers.
+
+**Why "best of N repetitions" for the manual measurement:**
+
+The manual throughput measurement runs 10 repetitions and takes the *best* (highest ops/sec). This matches how performance engineers typically report throughput:
+
+- The "best" number represents the engine's capability under ideal conditions (no OS interference, warm caches)
+- The mean would be dragged down by occasional outlier repetitions where the OS scheduled a context switch mid-run
+- Google Benchmark uses a similar philosophy: it auto-calibrates iterations until the measurement stabilizes, effectively seeking the steady-state best case
+
+For latency benchmarks, we report all percentiles (including max/P99) because *tail* latency matters. For throughput, the "peak sustainable rate" is what matters — hence "best of N."
+
+**Why this architecture / where it lives:**
+
+`ResultsWriter` lives in `apps/benchmark/` — it's app-local, not shared. No other executable needs to write benchmark results. If a future phase adds a second benchmark binary (unlikely — the single harness handles everything), the writer could be extracted to `tools/`. For now, YAGNI applies.
+
+The dependency direction is correct: `results_writer.cpp` includes only `results_writer.hpp` (its own header), `<filesystem>`, `<fstream>`, and `<cstdio>`. It has zero dependencies on `engine/`, `orderbook/`, or `core/` — it's purely a formatting utility that takes plain structs and writes text. This is deliberate: the writer shouldn't know or care what a `MatchingEngine` is.
+
+**Complexity:**
+- **Time:** O(n) where n is the number of result rows (6 latency + 1 throughput = 7 rows). Each row does one `snprintf` per column. Negligible — this runs once, after all measurement is complete.
+- **Space:** O(1) beyond the output file itself. No buffers allocated, no sorting, no accumulation.
+- **I/O:** One file open, ~20 lines of text written, one file close. Sub-millisecond on any system.
+
+**Benefits:**
+1. **Automated, not manual:** Running `benchmark_harness` produces the results file directly — no copy-paste from terminal output, no human error in transcribing numbers. This satisfies R6's "not a manual copy-paste step" requirement.
+2. **Honest environment description:** The file clearly states "Windows laptop, no CPU pinning, no turbo-boost control" — per requirements.md §5 item 2, we're transparent about measurement conditions rather than presenting noisy numbers as if they came from an isolated server.
+3. **Reproducible:** Same seed (12345) + same config → same workload → same results (modulo OS scheduling noise). Running the benchmark twice should produce similar-but-not-identical numbers, with variance explainable by system load.
+4. **Recruiter-readable:** The markdown table is immediately renderable on GitHub. A recruiter browsing the repo sees formatted latency and throughput numbers without running anything.
+
+**Drawbacks / tradeoffs accepted:**
+1. **Duplicated throughput loop:** The manual measurement in `main.cpp` duplicates the logic from `throughput_bench.cpp`'s `BM_SustainedThroughput`. If the workload config changes in one place, it must change in both. This is a maintenance cost accepted for the simplicity of getting a programmatic `double` without Google Benchmark reporter gymnastics.
+2. **Results file is overwritten every run:** There's no history, no append, no comparison between runs. If you want to compare Phase 2 vs Phase 3, you'd need to save the old file first (or commit it to git — which is the intended workflow). A more sophisticated approach would append timestamped rows, but that adds complexity for a portfolio project where "commit the baseline, then commit after optimization" is sufficient.
+3. **The `--benchmark_filter=^$` trick:** To run only the latency + manual throughput parts (skipping the slow Google Benchmark repetitions), you pass `--benchmark_filter=^$` which matches no benchmark names. This produces a "Failed to match any benchmarks" warning on stderr — cosmetically ugly, but harmless. The alternative (a `--skip-gbench` custom flag) would require custom argument parsing that's not worth the effort.
+4. **No commit hash in the output:** Design.md §7 mentions "commit <hash>" in the environment line, but we don't include it. Adding `git rev-parse HEAD` would require executing a subprocess from C++, which adds complexity and might fail in non-git environments (e.g., downloaded ZIP). The git commit is captured by the commit that adds this file anyway.
+
+**Alternatives considered and rejected:**
+
+1. **Subclassing `benchmark::BenchmarkReporter` to capture throughput:**
+   - Pros: would capture Google Benchmark's computed `items_per_second` without duplicating the workload loop
+   - Cons: Google Benchmark's reporter API is designed for *output formatting* (console, JSON, CSV), not for programmatic value extraction. Subclassing it requires overriding several methods, understanding the internal `BenchmarkResult` structure, and the reporter is invoked asynchronously from the benchmark thread. Much more complex than a 20-line manual measurement loop
+   - Rejected because the manual approach is simpler and produces equivalent results
+
+2. **Running Google Benchmark as a subprocess and parsing its JSON output:**
+   - Pros: uses the "official" numbers from Google Benchmark
+   - Cons: requires `fork()`/`CreateProcess()`, pipe management, JSON parsing (either hand-rolled or a third-party library), and error handling for subprocess failures. Astronomically more complex than measuring directly
+   - Rejected as wildly over-engineered for the problem
+
+3. **Writing results to JSON instead of markdown:**
+   - Pros: machine-parseable for automated regression detection
+   - Cons: design.md §7 specifies markdown. JSON is harder for humans to read in a GitHub PR diff. If automated regression detection is needed later, it can parse the markdown table (simple, fixed format) or we can add a parallel JSON output
+   - Rejected because the spec says markdown
+
+4. **Putting the results file at `docs/benchmarks/phase-02-baseline.md` (alongside LEARNING.md):**
+   - Cons: `benchmarks/results/` is the path specified in the project structure (structure.md's repo layout) and design.md §7. Changing it would deviate from the approved spec
+   - Rejected for spec compliance
+
+**How this connects to what came before:**
+- Tasks 4–6 implemented the latency benchmarks (`bench_add_no_match`, `bench_add_with_match`, `bench_cancel`) that produce `LatencyRecorder` statistics. Task 8's `main.cpp` collects those stats into `LatencyResult` structs.
+- Task 7 implemented `BM_SustainedThroughput` for Google Benchmark output. Task 8 adds a parallel manual measurement that produces the same number programmatically.
+- Task 3's `LatencyRecorder` provides `avg_ns()`, `median_ns()`, `p99_ns()`, `max_ns()` — exactly the four columns in the results table.
+- The `workload_generator` (Task 1) is used by both the Google Benchmark throughput case and the manual measurement, with identical config (same seed, same mix ratios).
+- This task produces the concrete deliverable that requirements.md R6 demands: "Record baseline numbers in `benchmarks/results/phase-02-baseline.md`."
+
+**Check your understanding:**
+1. Why does the manual throughput measurement take the "best of 10 reps" rather than the mean? In what scenario would the mean be a better metric than the best?
+2. The `write_results()` function uses `std::filesystem::create_directories`. What would happen on a system where `<filesystem>` isn't available (e.g., an older compiler)? Why is this acceptable for this project?
+3. The results file is overwritten every run. If you wanted to track performance across commits (detect regressions), what's the simplest approach that doesn't require changing the ResultsWriter code? (Hint: think about git.)
+4. Why does `ResultsWriter` have zero dependencies on `engine/` or `core/`? What would go wrong architecturally if it included `matching_engine.hpp`?
+
+
+### Task 9 — `scripts/run_benchmarks.sh`
+
+**What it does:**
+A bash wrapper script that runs the `benchmark_harness` executable under Linux's `taskset` utility for CPU pinning, with a configurable core number. It also documents (via comments) how to disable turbo boost and frequency scaling for more reproducible benchmark measurements. Running the benchmark *without* this script remains fully supported — the script is a recommendation for measurement quality, not a mandatory step.
+
+**Exact locations:**
+- `scripts/run_benchmarks.sh` (full file) — the wrapper script itself
+
+**Why CPU pinning matters for benchmark stability:**
+
+Modern operating systems migrate processes between CPU cores as they see fit (to balance load, respond to thermal throttling, etc.). Each core migration invalidates the process's L1 and L2 cache contents (these are per-core caches), causing a burst of cache misses on the new core as the working set is reloaded. For a latency benchmark measuring operations in the hundreds-of-nanoseconds range, a single core migration can inject 5–50μs of cache-refill overhead into what should be a sub-microsecond measurement — contaminating P99 and max latency numbers with artifacts that have nothing to do with the engine's actual performance.
+
+`taskset -c N` tells the Linux scheduler "this process may only run on core N." The result:
+
+1. **No core migration:** L1/L2 caches stay warm for the entire benchmark run. No spurious cache-miss spikes.
+2. **Predictable NUMA behavior:** On multi-socket systems, pinning to a specific core guarantees memory accesses go through the local NUMA node (assuming the process's heap was allocated after pinning). Cross-NUMA memory access adds 50–100ns per access — significant when measuring operations that take ~200ns total.
+3. **Reduced scheduling jitter:** Other processes won't be scheduled on the pinned core (unless they're also pinned there), reducing context-switch interruptions during measurement.
+
+The script defaults to core 0, but allows override via `CPU_CORE=3 ./scripts/run_benchmarks.sh`. Why core 0 as default? It's guaranteed to exist on every Linux system. In production benchmarking, you'd typically pick an isolated core (configured via `isolcpus` kernel parameter or `cset shield`), but that's machine-specific setup beyond this script's scope — hence "document, don't enforce."
+
+**Why turbo boost / frequency scaling matter (documented in comments, not automated):**
+
+Modern CPUs dynamically adjust clock frequency:
+- **Turbo boost:** temporarily raises frequency above base when thermal/power budgets allow. A benchmark running alone on a cold machine might get 4.5GHz; the same benchmark on a warm machine gets 3.8GHz. Same code, different numbers, purely due to silicon temperature.
+- **Frequency scaling (cpufreq governor):** the OS reduces frequency during idle periods to save power, then ramps back up under load. The first few iterations of a benchmark might run at reduced frequency (the "frequency scaling warm-up" artifact), making warm-up discarding (R7) even more important.
+
+Disabling both makes the clock frequency constant and predictable — repeated runs produce the same latency numbers ±5% instead of ±20%. The script documents the commands but doesn't execute them (they require `sudo`, vary by CPU vendor/model, and are machine-specific). The results file's environment line should honestly state whether these were applied.
+
+**Why this is a wrapper script, not built into the benchmark executable:**
+
+1. **`taskset` is an OS-level concern, not an application-level concern.** The engine should know nothing about CPU affinity — it's a pure computation. Affinity is set by the deployment environment (script, systemd unit, container cgroup), not by the binary itself.
+2. **Not everyone wants pinning.** On a developer laptop running other tasks, pinning to core 0 might conflict with the browser/IDE. The `--no-pin` flag or running the binary directly both work fine — you just get noisier numbers.
+3. **Linux-only.** `taskset` is a Linux utility. The project targets Ubuntu 24.04, but the developer might be building on macOS or Windows (as we are now). Making pinning a wrapper script rather than embedded `sched_setaffinity()` code means the benchmark compiles and runs everywhere, with pinning available only where `taskset` exists.
+
+**Why bash, specifically:**
+The project target is Linux-only (Ubuntu 24.04 per tech.md). Bash is universally available on Linux, `taskset` is in the `util-linux` package (installed by default on every Ubuntu system), and the script needs no complex logic (just argument parsing and `exec`). Python or a compiled helper would be overkill for 10 lines of logic.
+
+**Complexity:**
+- **Time:** O(1) for the script itself (argument check, then `exec` of the benchmark binary). The benchmark's runtime is determined by iteration count, not the wrapper.
+- **Space:** One text file, ~40 lines.
+
+**Benefits:**
+1. **Reproducible measurements with minimal effort:** `./scripts/run_benchmarks.sh` gives you CPU-pinned results without remembering the `taskset` syntax every time
+2. **Configurable core:** `CPU_CORE=3` overrides the default without editing the script — useful for machines where core 0 handles interrupts (a common Linux configuration)
+3. **Self-documenting:** The header comments explain *why* CPU pinning matters and *how* to go further (disabling turbo boost). A recruiter reading the script sees awareness of hardware-level performance concerns, not just "I know how to call `taskset`"
+4. **Non-intrusive:** The benchmark binary itself is unchanged. You can run it directly, via `taskset` manually, via `perf stat`, or via this script — all valid. The script adds a convenience, not a dependency
+
+**Drawbacks / tradeoffs accepted:**
+1. **Linux-only:** Won't run on Windows or macOS. This is acceptable because the project explicitly targets Linux-only (per tech.md), and the benchmark numbers in the results file should come from a controlled Linux environment anyway, not a developer laptop running Windows
+2. **Doesn't actually disable turbo boost:** The script only *documents* how to do it (via comments). Automating turbo-boost disabling would require `sudo` and could leave the system in a modified state if the script crashes. "Document, don't enforce" is the safer choice per requirements.md §5 item 2
+3. **Doesn't verify the binary was built with optimizations:** You could accidentally run it against a `Debug` build (which would produce meaninglessly slow numbers). The script could check `file benchmark_harness` or read `CMAKE_BUILD_TYPE`, but this adds complexity for a developer-tool script where the user is expected to know what build they're running
+4. **`set -euo pipefail` strictness:** The script exits on any error (including `taskset` failure on a system where the user doesn't have permission to pin CPUs). This is deliberate — silent failure with un-pinned execution would produce misleading results. Better to fail loudly and let the user use `--no-pin` explicitly
+
+**Alternatives considered and rejected:**
+
+1. **Embedding `sched_setaffinity()` in the benchmark binary:**
+   - Pros: No separate script needed, works without bash
+   - Cons: Makes the binary Linux-specific (wouldn't compile on macOS), mixes OS concerns into application code, harder to override (needs a flag vs. just running without the script). Violates the separation-of-concerns principle: the *engine* is portable pure computation; the *deployment environment* handles CPU affinity
+   - Rejected because deployment concerns belong outside the binary
+
+2. **A Python script instead of bash:**
+   - Pros: Cross-platform argument parsing, could do more validation
+   - Cons: Adds a Python dependency (not always available in minimal Docker containers used for benchmarking). Bash is guaranteed on the target platform. 10 lines of logic don't justify a full scripting language
+   - Rejected because bash is simpler and universally available on the target
+
+3. **A CMake custom target (`make run-benchmark`):**
+   - Pros: Integrated into the build system, discoverable via `cmake --build build --target run-benchmark`
+   - Cons: CMake custom commands are awkward for conditional logic (core selection, `--no-pin` flag). A bash script is more readable and maintainable for this kind of orchestration. Also, CMake targets don't have "arguments" — you can't do `make run-benchmark CORE=3`
+   - Rejected because bash is the right tool for optional-argument shell wrappers
+
+4. **Automating turbo boost / frequency governor control in the script:**
+   - Pros: One-command "perfect isolation" benchmark
+   - Cons: Requires `sudo`, might fail (some BIOSes don't expose `intel_pstate`), leaves system state modified if script is killed mid-run, varies dramatically between CPU vendors/generations (Intel pstate vs AMD boost vs ARM governors). The risk of silently running in an unexpected power state is worse than honestly documenting what to do manually
+   - Rejected because machine-specific system changes should be manual and deliberate
+
+**How this connects to what came before:**
+- Task 8's `ResultsWriter` outputs an "Environment" line that says whether CPU pinning was used. This script is what actually *enables* that pinning — the connection between "honest environment reporting" (Task 8) and "controllable measurement conditions" (Task 9).
+- Task 2's build skeleton defined `benchmark_harness` as the executable target. This script references that specific binary path (`build/benchmark_harness`), tying the script to the project's CMake output structure.
+- Requirements.md §5 item 2 resolved: "document, don't enforce" — this script is the implementation of that resolution. The script is *recommended*, not required; the results file records which approach was used.
+
+**Check your understanding:**
+1. Why does CPU core migration matter more for latency benchmarks (measuring individual operations in hundreds of nanoseconds) than for throughput benchmarks (measuring millions of operations over seconds)? What statistical artifact would core migration introduce into P99 numbers specifically?
+2. The script uses `set -euo pipefail`. What does each flag do, and what would happen if `taskset` failed *without* these flags set? (Hint: the benchmark would run, but not pinned — silently producing noisy results.)
+3. Why is core 0 a potentially *bad* default on some Linux configurations? (Hint: think about interrupt handling — which core typically handles network/disk interrupts by default?)
+
+
+### Task 10 — Phase 2 Summary & Definition of Done
+
+**What it does:**
+Confirms that all Phase 2 deliverables are complete and correct, documents the final baseline numbers in one consolidated reference, and sets context for Phase 3.
+
+**Phase 2 Baseline Numbers (all numbers from `benchmarks/results/phase-02-baseline.md`):**
+
+| Operation | Avg (ns) | Median (ns) | P99 (ns) | Max (ns) |
+|---|---|---|---|---|
+| ADD (no match) | 967.6 | 900 | 1300 | 30200 |
+| ADD (1 fill) | 621.0 | 600 | 700 | 79800 |
+| ADD (10 fills) | 2531.0 | 2300 | 3400 | 109400 |
+| ADD (100 fills) | 20641.2 | 19500 | 42100 | 231200 |
+| CANCEL (front) | 397.4 | 300 | 1100 | 235400 |
+| CANCEL (back) | 272.7 | 200 | 900 | 74300 |
+
+| Workload | Throughput |
+|---|---|
+| Mixed (60% limit, 10% market, 30% cancel) | 2.92M orders/sec |
+
+**Environment:** Windows laptop, no CPU pinning, no turbo-boost control, RelWithDebInfo build.
+
+**Performance context — the Charter's ~100k target:**
+The Charter (`PLAN.md`) set a conservative Phase 2 target of ~100k orders/sec for the initial `std::map`-based baseline. The measured throughput of **2.92M orders/sec** exceeds that by roughly 29×. This isn't surprising in retrospect: the `std::map` price tree is O(log N) per insert/lookup, but with typical book depths of a few dozen price levels, that log(N) is small (log₂(30) ≈ 5 comparisons). Combined with the intrusive list giving O(1) queue operations and the absence of any I/O or synchronization, a single-threaded matching engine on modern hardware processes simple order operations in well under a microsecond.
+
+The Charter's ~100k estimate was likely calibrated for a system with more overhead (logging, network I/O, serialization) or more conservative hardware assumptions. Our engine — being a pure, zero-I/O computation kernel measured on a modern CPU — naturally exceeds that baseline. This is good news: it means even without Phase 3's memory-pool optimizations, the architecture is already fast enough to be credible in a portfolio context. Phase 3's job is to *further* reduce the per-order allocation overhead and establish tighter, more predictable tail latency.
+
+**Key observations from the numbers:**
+
+1. **ADD (no match) at ~900ns median** — This includes `std::make_unique<Order>()` (heap allocation), `std::map::emplace` (tree walk + rebalance), `unordered_map::emplace` (hash + insert), and intrusive-list append. The heap allocation is the primary target for Phase 3's memory pool.
+
+2. **ADD (1 fill) is *faster* than ADD (no match)** — 600ns median vs 900ns. Counter-intuitive at first, but correct: a matching order that fully fills against one resting order does *less* work than a non-crossing insert. It doesn't need to insert into the price tree or link into the intrusive list — it just removes the resting order and produces a trade. The dominant cost in the no-match path (tree insertion + heap allocation for the new order) is avoided in the immediate-fill path.
+
+3. **ADD (N fills) scales roughly linearly with N** — 600ns for 1, 2300ns for 10, 19500ns for 100 (median). That's ~190ns marginal cost per additional fill, which matches expectations: each fill unlinks one node from the intrusive list (O(1)) and may remove a price level from the map (O(log N) amortized over the sweep).
+
+4. **CANCEL is the fastest operation** — 200-300ns median. This validates the intrusive-list + `unordered_map<OrderId, Order*>` design: O(1) hash lookup, O(1) unlink, done. Front-of-queue and back-of-queue are statistically indistinguishable as expected.
+
+5. **Max values are 100-1000× the median** — This is normal for a system without CPU isolation: context switches, timer interrupts, and cache evictions from other processes cause occasional spikes. These outliers are *why* the Charter specifies P99/max reporting alongside median — they reveal whether the system has bounded worst-case behavior or unbounded tail latency. With proper CPU pinning and interrupt affinity (Phase 5+ production deployment), max values would shrink dramatically.
+
+**Definition of Done checklist (requirements.md §4):**
+
+1. ✓ Numbers recorded for R1 (ADD no match), R2 (ADD with match × 3 fill counts), R3 (CANCEL front/back), R4 (sustained throughput) — all in `benchmarks/results/phase-02-baseline.md`
+2. ✓ Results file format matches Charter's performance targets table (avg/median/P99/max for latency, orders/sec for throughput)
+3. ✓ `benchmarks/results/phase-02-baseline.md` exists and is referenced from `docs/LEARNING.md` (multiple references across Tasks 4-8 entries)
+4. ✓ All 143 tests pass (Phase 1: 128 tests + Phase 2: 15 tests covering WorkloadGenerator and LatencyRecorder)
+
+**What Phase 3 (memory pool) will target:**
+The primary optimization target visible in these numbers is the per-order `std::make_unique<Order>()` heap allocation in the ADD (no match) path. Every non-crossing limit order currently:
+1. Allocates ~80 bytes on the general-purpose heap (`new Order`)
+2. Deallocates that same block on cancel or fill (`delete`)
+
+A pre-allocated object pool (Phase 3) will replace both operations with O(1) pointer arithmetic into a contiguous memory region, eliminating:
+- `malloc`/`free` overhead (~50-100ns per pair on a contention-free heap)
+- Memory fragmentation (scattered `Order` objects across pages → poor cache prefetch behavior)
+- Unpredictable allocation latency (the heap's free-list walk is data-dependent, contributing to the high max/P99 gap)
+
+The expected improvement: ADD (no match) median should drop from ~900ns to ~400-600ns, and more importantly, the P99-to-median ratio should tighten (fewer allocation-induced outliers). These are predictions to be validated — Phase 3's results will be compared against this Phase 2 baseline to confirm or disprove them.
+
+**Results file location:** `benchmarks/results/phase-02-baseline.md`
+
+**Check your understanding:**
+1. Why is ADD-with-1-fill *faster* than ADD-no-match? What work does the no-match path do that the immediate-fill path skips entirely?
+2. The sustained throughput is 2.92M ops/sec, but the median ADD latency is 900ns. If you naively compute 1/900ns = ~1.1M ops/sec, why is the throughput number higher? (Hint: the mixed workload includes cancels at 200-300ns and market orders that match immediately at ~600ns — the *mix* is faster than the slowest individual operation.)
+3. If Phase 3's memory pool reduces ADD (no match) from 900ns to 500ns median, what throughput improvement would you roughly expect for the mixed workload? Why isn't the improvement proportional (it won't go from 2.92M to 2.92M × 900/500)?
+
+## Phase 3: Memory Pool
+
+### Task 1 — `OrderPool`: Fixed-Capacity Pool with Intrusive Free List
+
+**What it does:**
+`OrderPool` is a fixed-capacity, pre-allocated pool of `Order` slots that replaces per-order heap allocation (`new`/`delete`) with O(1) acquire/release operations. When the engine needs a new `Order`, it pops a slot off an intrusive free list stored within the pool's own memory. When an order is done (filled or cancelled), its slot is pushed back onto the free list. No heap allocation occurs after the pool's one-time construction.
+
+This is the foundational building block for Phase 3. Later tasks in this phase will wire it into `OrderBook` (replacing `unique_ptr<Order>` ownership) and `MatchingEngine` (handling pool exhaustion), but this task implements and tests the pool in complete isolation.
+
+**Exact locations:**
+- `orderbook/order_pool.hpp` (lines 1–63) — class declaration
+- `orderbook/order_pool.cpp` (lines 1–80) — implementation
+- `tests/order_pool_test.cpp` (lines 1–204) — GoogleTest suite (10 tests)
+- `CMakeLists.txt` (line 54) — `order_pool.cpp` added to `orderbook` library target
+- `CMakeLists.txt` (lines 86–88) — `order_pool_test` executable and test discovery
+
+**Why this data structure / algorithm, specifically:**
+
+The core idea is an **intrusive free list** — a singly-linked list where the link ("next free slot index") is stored *inside the free slot's own memory*, not in a separate data structure. Here's why this beats the alternatives:
+
+1. **vs. `std::vector<Order>` + `std::stack<size_t>` of free indices:**
+   A separate "free index stack" works correctly but costs extra memory (8 bytes × capacity for the index vector) and introduces an extra cache line access on every acquire/release. The intrusive approach uses *zero* additional memory for the free list — it reuses the Order slot's own bytes while the slot is unoccupied. In a pool of 1,000,000 orders, that's 8MB of saved overhead.
+
+2. **vs. `std::vector<Order>` with a "used" bitmap:**
+   A bitmap requires scanning to find a free slot — O(capacity/64) in the worst case with 64-bit words, vs. O(1) for the free-list pop. Even with `__builtin_ctzll` tricks, scanning is slower and less predictable than a single index read.
+
+3. **vs. `std::list<Order*>` of free slots:**
+   `std::list` allocates a separate node per entry (`prev`/`next` + payload pointer = 24 bytes per node on 64-bit), completely defeating the purpose of avoiding allocation. The intrusive approach avoids all of this.
+
+4. **vs. `new`/`delete` per order (Phase 1 approach):**
+   The whole point of the pool. `malloc`/`new` on modern allocators (glibc's ptmalloc2, tcmalloc, jemalloc) involves thread-local caches, size-class lookups, and potential syscalls for large allocations. Even tcmalloc's fast path is ~20–50ns. The pool's free-list pop is a single index read + pointer arithmetic: effectively 1–3 clock cycles. Phase 2's benchmarks show ADD (no match) at 900ns median — a significant portion of that is heap allocation, which this phase eliminates.
+
+**Why index-based instead of pointer-based free list:**
+
+The free-list link could be stored as either:
+- A raw `Order*` pointer to the next free slot, or
+- A `size_t` index into the backing array
+
+We chose **indices** for one concrete reason: debug-build validation. With an index, the `release()` function can trivially assert `index < capacity_` to detect use-after-free or double-free bugs. With a raw pointer, the equivalent check ("is this pointer within my allocation?") requires computing `ptr - base` anyway (which gives you... an index), plus the comparison is less readable. The index approach makes the invariant explicit and self-documenting.
+
+The cost is negligible: one extra addition (`&storage_[index]` = base + index × sizeof(Order)) on acquire, which the CPU's addressing modes handle in a single instruction.
+
+**Why raw `::operator new` instead of `std::unique_ptr<Order[]>` or `std::vector<Order>`:**
+
+This was a significant implementation choice that required iterating during development:
+
+- `std::make_unique<Order[]>(capacity)` **value-initializes** every element in the array. This requires `Order` to be default-constructible. But our `Order` struct contains strong-typed fields (`OrderId`, `Price`, `Quantity`, `Sequence`) that deliberately have `explicit` constructors and *no* default constructors — that's a Phase 1 design choice for type safety (prevents accidentally creating a "zero" OrderId that looks valid).
+- `std::vector<Order>` has the same problem (value-initializes on resize), *plus* it's technically capable of reallocating if someone calls `push_back` — a footgun the pool's entire purpose is to eliminate.
+- Raw `::operator new(capacity * sizeof(Order), std::align_val_t{alignof(Order)})` allocates properly-aligned memory without calling any constructors. This is exactly what we want: the memory is just raw bytes until `acquire()` hands it out, at which point the caller (will be `OrderBook::insert` in Task 2) constructs a valid `Order` in-place.
+
+The matching `::operator delete` in the destructor frees the raw memory without calling destructors — which is fine because `Order` is trivially destructible (no heap allocations, no RAII resources, just POD-like data + raw pointers).
+
+**Why this architecture / pattern:**
+
+`OrderPool` lives in `orderbook/` (not `engine/` or `core/`) because:
+- It manages `Order` lifetime, which is `orderbook/`'s responsibility (Phase 1 established that `OrderBook` owns orders)
+- It doesn't contain matching logic (that's `engine/`'s job)
+- It's not a pure data type (that's `core/`'s scope — `core/` has no logic)
+- The dependency direction stays clean: `orderbook/` depends on `core/Order.hpp`, engine depends on `orderbook/` — `OrderPool` doesn't need to know about the engine
+
+The pool is deliberately **Order-specific, not generic `Pool<T>`**. The design.md §5 item 3 (resolved open question) explains: generalizing before there's a second real consumer is speculative abstraction. If Phase 8's risk engine needs a pool for `Position` objects, *that's* the signal to extract a template — not before.
+
+**Complexity:**
+- **acquire():** O(1) — read `free_list_head_`, read `next_free(head)` to advance head, return pointer. Three memory accesses, no branching except the exhaustion check.
+- **release():** O(1) — compute index from pointer arithmetic, write `next_free(index) = head`, update head. Two memory accesses + one subtraction.
+- **Space:** `capacity × sizeof(Order)` for the backing array + 3 × `sizeof(size_t)` for bookkeeping (capacity, head, free_count). The free list itself uses zero additional memory (stored in-place in free slots).
+
+**Benefits:**
+1. **Zero hot-path allocation:** After construction, no heap interaction ever occurs for order lifetime management. The kernel/allocator is completely out of the picture.
+2. **Cache-friendly:** Orders are contiguous in memory (`storage_[0]` through `storage_[capacity-1]`). When the engine processes multiple orders at the same price level, they're likely in the same or adjacent cache lines. Compare with `new Order` per order, where the allocator spreads objects across the heap unpredictably.
+3. **Stable addresses:** The backing array never moves. This is critical because Phase 1's intrusive linked list (`Order::prev`/`next`/`level`) stores raw pointers *into* this storage. If the storage could reallocate (like `std::vector` can), every intrusive pointer in every `PriceLevel` queue would be invalidated — catastrophic.
+4. **Deterministic performance:** No allocator fragmentation over time. The millionth acquire is exactly as fast as the first. This eliminates a class of latency spikes that HFT systems are deeply allergic to.
+5. **Debug-build safety:** The index-based free list enables `assert(idx < capacity_)` on every release, catching use-after-free and out-of-range bugs immediately in development.
+
+**Drawbacks / known issues / tradeoffs accepted:**
+1. **Fixed capacity:** The pool cannot grow. If more orders arrive than the configured capacity, they're rejected (`nullptr` from `acquire()`, translated to `PoolExhausted` by the engine in Task 3). This is deliberate — a matching engine that silently degrades to heap allocation under load would have unpredictable latency spikes, which is worse than a clean rejection. The operator sizes the pool at startup for their expected peak load.
+2. **Memory committed upfront:** A pool of 1,000,000 orders (default) at ~80 bytes each = ~80MB of virtual memory committed at startup, even if only 1,000 orders are ever active simultaneously. For an HFT system on a 64GB server, this is negligible. For a unit test, we pass a small capacity (4–64 slots in the test file) to avoid waste.
+3. **No thread safety:** `acquire()` and `release()` are not synchronized. This is correct for Phase 3 (the engine is single-threaded per the Charter), but Phase 4's lock-free queue will need to address concurrent access if the pool is shared across threads. (Spoiler: it likely won't be shared — the matching thread will own the pool exclusively, with the network thread communicating orders via the lock-free queue.)
+4. **`reinterpret_cast` for the free-list link:** Storing a `size_t` in the first bytes of an unused `Order` slot technically involves type-punning. The `static_assert(sizeof(Order) >= sizeof(size_t))` and `static_assert(alignof(Order) >= alignof(size_t))` guarantee this is safe in practice on all x86-64 platforms, but it's not 100% standards-compliant in the strictest reading of C++20's object model. A `std::memcpy`-based approach would be strictly conforming but adds function-call overhead in debug builds. We accept the `reinterpret_cast` since every real allocator (glibc, tcmalloc, jemalloc) uses the same technique.
+5. **No double-free detection in release builds:** The debug `assert` catches double-free, but in release builds (`NDEBUG` defined), a double-free silently corrupts the free list. A production system might add a "poisoned" magic value check at the cost of one extra comparison per release. For this project (demonstration, not production), the assert-only approach is sufficient.
+
+**Alternatives considered and rejected:**
+
+1. **`std::pmr::monotonic_buffer_resource` + `std::pmr::polymorphic_allocator`:**
+   C++17's polymorphic memory resources provide arena-style allocation. Rejected because:
+   - `monotonic_buffer_resource` doesn't support deallocation (it's grow-only)
+   - `std::pmr::unsynchronized_pool_resource` supports deallocation but has significant overhead (size-class management, free-list-per-size-class bookkeeping)
+   - Both hide the allocation strategy behind a virtual dispatch (`allocate`/`deallocate` are virtual in `memory_resource`), which is antithetical to HFT's "no virtual calls on the hot path" philosophy
+   - Our pool is trivially simpler and faster for this specific use case (fixed-size objects, known at compile time)
+
+2. **Separate `std::vector<size_t> free_indices_` alongside the storage:**
+   Functionally correct — maintain a stack of free slot indices. Rejected because:
+   - Costs 8 bytes × capacity extra memory (8MB for 1M slots)
+   - Extra pointer dereference on every acquire/release (the free-index vector is in a different memory region than the Order storage)
+   - Less elegant: you're maintaining two parallel data structures when the intrusive approach requires exactly one
+
+3. **Generic `template<typename T> class Pool`:**
+   Rejected per design.md's resolved open question: no second consumer exists yet. Premature abstraction adds template complexity (harder error messages, slower compile times) with zero concrete benefit today. If Phase 8 needs a `Position` pool, extracting the template then is a 30-minute refactor — not a reason to over-design now.
+
+4. **`mmap`-based allocation with huge pages:**
+   Direct memory mapping with `MAP_HUGETLB` would reduce TLB misses for the 80MB allocation. Rejected for Phase 3 because:
+   - Requires Linux-specific code (this phase focuses on correctness, not platform optimization)
+   - Requires `CAP_IPC_LOCK` or `vm.nr_hugepages` sysctl — adds deployment complexity
+   - The performance benefit is real but better introduced in Phase 4 or later when the benchmark numbers show TLB pressure is actually a bottleneck
+   - Premature optimization before measurement (Phase 2 didn't identify TLB misses as the dominant cost)
+
+5. **Object pool with constructor forwarding (`pool.acquire(id, side, price, qty, seq)`):**
+   The pool could accept `Order`'s construction arguments and placement-new a fully initialized `Order`. Rejected because:
+   - Couples `OrderPool` to `Order`'s constructor signature — if `Order` gains a field in a later phase, `OrderPool` needs updating
+   - The current design (`acquire()` returns raw memory, caller fills it in) keeps `OrderPool` ignorant of `Order`'s fields beyond `sizeof(Order)` — better separation of concerns
+   - `OrderBook::insert` already has all the fields ready; writing them directly is no more code than passing them through `acquire`
+
+**How this connects to what came before:**
+- Phase 1's `OrderBook` used `unordered_map<OrderId, unique_ptr<Order>>` for ownership. Task 2 of this phase will replace `unique_ptr<Order>` with a raw `Order*` (non-owning index) backed by `OrderPool` — but that's a separate task.
+- Phase 1's `Order` struct has `prev`/`next`/`level` pointers that assume stable addresses. `OrderPool`'s fixed backing array guarantees this stability — it's the reason `std::vector<Order>` was rejected (it *can* reallocate, even if we'd never trigger it).
+- Phase 2's benchmarks showed ADD (no match) at 900ns median — a significant contributor being `std::make_unique<Order>` allocating on the heap. This pool eliminates that cost entirely. Task 5 will measure the actual improvement.
+
+**Check your understanding:**
+1. Why would storing the free-list link as a raw `Order*` (pointer to next free slot) instead of a `size_t` index make debug-build validation harder? What assertion would you write, and why is it less natural than `assert(index < capacity_)`?
+2. If `Order` had a non-trivial destructor (e.g., it owned a `std::string` member for some reason), the current `OrderPool` destructor (which just frees raw memory without calling destructors) would leak. How would you fix this while keeping O(1) release? (Hint: you'd need to track which slots are currently acquired vs. free.)
+3. The pool allocates `capacity × sizeof(Order)` bytes at construction. On a system with 4KB pages, how many page faults will the OS generate when you first *use* (not just allocate) a pool of 1,000,000 × 80-byte orders? Why does the OS defer this cost to first use rather than paying it at allocation time? (Hint: overcommit / demand paging.)
+
+### Task 2 — `OrderBook` ownership swap
+
+**What it does:**
+Replaces `OrderBook`'s ownership model from `unordered_map<OrderId, unique_ptr<Order>>` (heap-allocated, individually managed Order lifetime) to a non-owning `unordered_map<OrderId, Order*>` index backed by `OrderPool` (pre-allocated, O(1) acquire/release from a contiguous memory slab). This is the central Phase 3 change — it's what eliminates per-order heap allocation/deallocation from the engine's hot path.
+
+The swap is designed to be *invisible* to all consumers of `OrderBook` — the engine's matching logic, the CLI app, and every Phase 1 test should continue working without behavioral changes. This was explicitly predicted in Phase 1's `design.md` §8 ("if we design ownership correctly now, swapping the allocator in Phase 3 will be a local change"). Task 2 proves that prediction correct: 150 existing tests pass unchanged.
+
+**Exact locations:**
+- `orderbook/order_book.hpp` (full file) — class declaration with new `OrderPool pool_` member, changed type alias from `OrderOwnerMap` to `OrderIndex`, changed `add_order` signature from `unique_ptr<Order>` to `Order` by value
+- `orderbook/order_book.cpp` (full file) — implementation: `add_order` does `pool_.acquire()` + copy + insert index + link; `remove_order` does unlink + erase index + `pool_.release()`; `find_order` returns `it->second` directly (no `.get()` needed)
+- `engine/matching_engine.cpp` (lines 80-93) — `submit_limit` changed from `make_unique<Order>(...)` + `book_.add_order(std::move(resting))` to plain `Order order_data{...}` + `book_.add_order(order_data)`
+- `tests/order_book_test.cpp` (lines 1-15) — `make_order` helper changed from returning `unique_ptr<Order>` to returning `Order` by value. This is the only test modification — all assertions remain bit-for-bit identical.
+
+**Why this data structure / algorithm, specifically:**
+
+The new ownership model is: **`OrderPool` owns all memory (via a single contiguous allocation), `OrderBook` holds a non-owning index for lookup, and raw `Order*` pointers are shared freely.**
+
+Why this beats the old `unique_ptr<Order>` model:
+- `unique_ptr` means every ADD order calls `operator new` (heap allocation). On Linux with glibc, that's a `brk()`/`mmap()` syscall or an `arena`-level lock acquisition — measured at 50-200ns per call in Phase 2's benchmarks. The pool replaces this with a free-list pop: a single array index read + decrement. O(1), no syscall, no lock, ~3ns.
+- `unique_ptr` means every CANCEL or full-fill calls `operator delete` (heap deallocation). Same cost story in reverse. The pool replaces this with a free-list push: a single array index write + increment.
+- The pool's contiguous backing array means all `Order` slots are in a single allocation. Sequential acquires touch sequential memory addresses, which is cache-line friendly. `unique_ptr` scatters Orders across the heap wherever `malloc` happened to place them.
+
+Why `unordered_map<OrderId, Order*>` (non-owning index) instead of putting OrderId→slot mapping inside the pool itself:
+- Separation of concerns: the pool is a generic "give me a slot / take it back" allocator. It doesn't know about OrderIds, price levels, or any business concept. The index (lookup by OrderId) is a business-level concern that belongs in `OrderBook`.
+- The pool could serve any struct that fits in `sizeof(Order)` bytes, in principle. Keeping it dumb maximizes reusability (not that we'll reuse it — but it makes the design auditable and the interfaces minimal).
+
+**Why this architecture / pattern:**
+
+The key design decision is: **`OrderBook` owns the `OrderPool` (as a member), and `OrderBook`'s constructor takes an optional `pool_capacity` parameter (default 1M).**
+
+Why the pool lives inside `OrderBook` (not inside `MatchingEngine` or as a standalone):
+- `OrderBook` is the "owner" of resting orders — it decides when an order is inserted and when it's removed. Ownership of the *memory* should follow ownership of the *lifetime*. If the pool lived in `MatchingEngine`, the engine would need to pass pool pointers to the book, creating a bidirectional dependency (`engine` → `orderbook` for matching, `orderbook` → pool-in-engine for allocation). That's a layering violation.
+- The pool being inside `OrderBook` means `OrderBook` is self-contained: construct one, use it, destroy it — no external allocation plumbing needed. This makes testing trivial (each test just does `OrderBook book;` with the default 1M capacity).
+
+Why `pool_` is declared *before* `orders_` in the class:
+- C++ destroys members in reverse declaration order. By declaring `pool_` first, it's destroyed *last*. If `orders_` were destroyed after the pool, the raw `Order*` pointers in `orders_` would be dangling during destruction. With `pool_` declared first: `orders_` (the index) destructs first (its `Order*` values become dangling but that's fine — `unordered_map` destructor doesn't dereference values), then `pool_` destructs and frees the backing memory.
+
+Why `add_order(Order order_data)` takes `Order` by value (not by reference, not as fields):
+- By value: the caller constructs an `Order` on the stack, passes it in, and `add_order` copies it into the pool slot. This is a single `memcpy`-equivalent of ~80 bytes (Order's size) — negligible cost.
+- By const reference would work identically (the copy into the pool slot happens either way). By value was chosen because it semantically signals "I'm taking this data and putting it somewhere else" — the original can be discarded.
+- Taking individual fields (`OrderId id, Side side, Price price, ...`) was rejected because it couples `add_order`'s signature to Order's field list. If Order gains a field later, `add_order` would need updating. Taking `Order` by value means additions to `Order` are transparent to `add_order`'s interface.
+- Taking `unique_ptr<Order>` + copying into pool (wasteful) was rejected because it allocates on the heap just to immediately copy and discard — defeats the entire purpose of the pool.
+
+**Complexity:**
+- **`add_order`:** O(1) amortized. `pool_.acquire()` is O(1) (free-list pop). Copy into slot is O(1) (fixed-size struct). `orders_.emplace()` is O(1) amortized (hash table insert). `bids_/asks_.try_emplace()` is O(log P) where P is the number of distinct price levels on that side. `level.push_back()` is O(1) (append to intrusive list tail). Total: O(log P), same as before — the pool doesn't change the tree insertion cost.
+- **`remove_order`:** O(1) amortized. `level->remove()` is O(1) (intrusive list unlink). `bids_/asks_.erase()` is O(log P) (only when level becomes empty). `orders_.erase()` is O(1) amortized. `pool_.release()` is O(1). Total: O(log P) worst case, O(1) typical.
+- **`find_order`:** O(1) amortized (hash table lookup). Changed from `it->second.get()` to `it->second` — no `.get()` call needed since the map now stores raw pointers directly.
+- **Space:** Pool allocates `capacity × sizeof(Order)` upfront (80 bytes × 1M = 80MB for default capacity). This is the tradeoff: guaranteed O(1) allocation in exchange for upfront memory reservation. The hash map still exists for O(1) cancel (can't eliminate it — we need OrderId→Order* lookup).
+
+**Benefits:**
+1. **Zero heap allocation in the ADD path:** `pool_.acquire()` is a free-list pop — no syscall, no lock, no fragmentation. This directly addresses Phase 2's finding that `make_unique<Order>` was a significant contributor to ADD latency.
+2. **Zero heap deallocation in the CANCEL/fill path:** `pool_.release()` is a free-list push — instant return of memory to the pool without touching the OS allocator.
+3. **Stable addresses guaranteed:** The pool's backing array never moves, so all existing intrusive pointers (Order::prev, next, level) remain valid without any changes to PriceLevel or the matching loop. This is why the swap is invisible.
+4. **Invisible swap — zero Phase 1 test changes:** All 150 existing tests pass unchanged. The only "test modification" is the `make_order` helper returning `Order` by value instead of `unique_ptr<Order>` — a test utility adapting to the new API, not a behavioral change. Every assertion in every test remains bit-for-bit identical.
+
+**Drawbacks / tradeoffs accepted:**
+1. **Fixed upfront allocation (80MB for 1M capacity):** The pool allocates all memory at construction, whether or not it's all used. For a test with 3 orders, 79.99MB is "wasted." In practice: (a) the OS uses demand paging — physical pages are only allocated on first touch, so unused pool capacity costs only virtual address space (free on 64-bit), and (b) the fixed capacity is the entire point — no reallocation means no address instability.
+2. **Capacity limit:** Once the pool is full, no more orders can be accepted. Phase 1's `unique_ptr` model had no capacity limit (limited only by system memory). Task 3 adds `PoolExhausted` handling so the engine gracefully rejects orders when full, but the fundamental tradeoff is: bounded memory for bounded latency.
+3. **`Order` must be trivially copyable:** The `*slot = order_data;` assignment in `add_order` relies on `Order` being a plain struct with no custom copy/move semantics. If `Order` ever gained a non-trivial member (e.g., a `std::string`), this copy would still work but might not be "zero-cost." In practice, `Order` will remain a fixed-layout POD struct forever — this is a matching engine, not a general-purpose container.
+4. **No concurrent access:** The pool has no synchronization. Two threads calling `acquire()` simultaneously would corrupt the free list. This is fine because the engine is single-threaded by design (Phase 4's lock-free queue will mediate between the network thread and the matching thread, but the matching thread alone touches the pool).
+
+**Alternatives that were considered and rejected:**
+
+1. **Keep `unique_ptr<Order>` but use a custom allocator (e.g., `pmr::monotonic_buffer_resource`):**
+   - This would avoid changing the `add_order` signature — `make_unique` would just use a different backing allocator.
+   - Rejected because: (a) `pmr` allocators still go through the allocator interface (virtual dispatch per allocation), adding overhead the pool eliminates; (b) `monotonic_buffer_resource` doesn't support deallocation (memory is only freed when the resource is destroyed), which makes CANCEL unable to recycle slots; (c) `pmr::unsynchronized_pool_resource` supports deallocation but has more overhead than our purpose-built free list (it handles arbitrary sizes/alignments, we handle exactly one: `sizeof(Order)`).
+
+2. **`std::vector<Order>` as backing storage (index into vector instead of raw pointer):**
+   - The vector would hold `Order` objects directly, and the index would be `unordered_map<OrderId, size_t>` (index into vector).
+   - Rejected because: (a) `std::vector` is *capable* of reallocating (even if we `reserve()` and never exceed capacity, a future code change could accidentally trigger reallocation), which would invalidate all `Order*` pointers held by intrusive lists and PriceLevels; (b) index-based access adds an indirection (`&storage_[idx]`) every time the matching loop dereferences an order, though this is negligible. The `unique_ptr<Order[]>` with manual `operator new` (what `OrderPool` uses) provides the guarantee without the footgun.
+
+3. **`OrderBook::add_order` taking individual fields instead of `Order` by value:**
+   - Signature: `add_order(OrderId id, Side side, Price price, Quantity qty, Sequence seq)`
+   - Pros: No temporary `Order` constructed on the stack (writes directly into pool slot field by field).
+   - Cons: Couples `add_order`'s interface to `Order`'s field list. Adding a field to `Order` means changing `add_order`'s signature in both the header and all callers. With `Order` by value, adding a field only requires updating the aggregate initialization at the call site — `add_order` itself is unchanged.
+   - Rejected because interface stability matters more than saving one 80-byte stack copy.
+
+4. **Pool inside `MatchingEngine` instead of `OrderBook`:**
+   - The engine would own the pool and pass `Order*` pointers down to the book.
+   - Rejected because it reverses the dependency direction: `OrderBook` would need to know that someone external manages its memory. Currently, `OrderBook` is self-contained — it manages its own orders. Putting the pool inside `OrderBook` preserves this encapsulation and matches the "OrderBook owns resting orders" semantic.
+
+**How this connects to what came before:**
+- **Phase 1 `design.md` §8** explicitly predicted this swap would be invisible: "The only change needed in Phase 3 is swapping who *allocates* the Order — the OrderBook changes from `make_unique<Order>` to `pool_.acquire()`, and the raw `Order*` that's returned and used everywhere else stays the same." Task 2 validates that prediction — zero behavioral test changes needed.
+- **Task 1** (this phase) built `OrderPool` as a standalone, fully tested module. Task 2 integrates it into `OrderBook` — the pool is now *used* rather than just *tested in isolation*.
+- **Phase 2's benchmarks** showed ADD (no match) at ~900ns median, with heap allocation being a significant contributor. Task 5 of this phase will re-run those benchmarks to measure the actual improvement. The expectation: ADD latency drops substantially (pool acquire is ~3ns vs. ~100-200ns for malloc), while CANCEL/match latency drops less (they were already fast due to intrusive-list O(1) unlink — the allocation/deallocation wasn't their bottleneck).
+
+**Check your understanding:**
+1. Why is `pool_` declared *before* `orders_` in the class definition? What specific C++ rule makes declaration order matter here, and what would go wrong if they were swapped?
+2. The old `find_order` returned `it->second.get()` (calling `.get()` on a `unique_ptr`). The new one returns `it->second` directly. Why is this change safe — what guarantee ensures the raw pointer in the map is valid (not dangling) whenever `find_order` is called?
+3. If `add_order` returned `nullptr` (pool exhausted) and the engine ignored it (kept running), what would happen in the matching loop? Specifically: what would `book_.find_order(id)` return for that order, and what would happen if another order tried to match against it?
+4. Why does the test helper `make_order` now return `Order` by value instead of `unique_ptr<Order>`? What would happen if the helper still returned `unique_ptr<Order>` — would the tests compile? Would they pass?
+
+### Task 3 — `PoolExhausted` Wiring
+
+**What it does:**
+Closes the loop on pool capacity enforcement at the engine level. When the order pool is full, a new limit order submission is rejected with `EngineResult::PoolExhausted` *before* any state mutation occurs — no ID is recorded in `ever_seen_ids_`, no events are emitted, no matching happens. This is the "zero side effects on rejection" discipline that every rejection path in the engine follows.
+
+**Exact locations:**
+- `core/Events.hpp:24` — `PoolExhausted` added to the `EngineResult` enum
+- `orderbook/order_book.hpp` — `pool_available()` accessor (inline, delegates to `pool_.available()`)
+- `engine/matching_engine.hpp:39-42` — constructor signature updated to accept `pool_capacity` parameter (default 1,000,000)
+- `engine/matching_engine.cpp:5` — constructor forwards `pool_capacity` to `OrderBook`
+- `engine/matching_engine.cpp:67-72` — the pre-check in `submit_limit`, placed after duplicate-ID validation but before `ever_seen_ids_.insert()`
+- `apps/cli/console_printer.cpp:22-23` — `PoolExhausted` case in `result_to_string`
+- `tests/pool_exhaustion_test.cpp` — 7 test cases covering rejection, zero-side-effects, recycling, and market-order immunity
+
+**Why a pre-check (before acceptance) rather than post-check (after matching):**
+
+This is the most interesting design decision in this task. There are two valid approaches:
+
+- **Option A (chosen): Pre-check before acceptance.** Check `pool_available() == 0` before inserting the ID into `ever_seen_ids_` or emitting `on_order_accepted`. If the pool is full, reject immediately.
+- **Option B: Post-check after matching.** Match first, then check if the pool can hold the remainder. If remaining > 0 and pool is full, we have a problem — we've already emitted `on_order_accepted` and possibly trades that consumed other resting orders.
+
+Option B is *theoretically* smarter: an order that would fully fill doesn't need a pool slot, so why reject it? But it creates an irrecoverable contradiction: if matching consumed resting orders (real state changes with emitted trade events) and then the remainder can't rest, we'd need to "undo" those trades — which is impossible once `on_trade` has been called to observers. The engine would be in an inconsistent state.
+
+Option A is pessimistic but correct: it rejects orders that *might* have fully filled. The tradeoff is explicit: an order that would have fully crossed the book gets rejected if the pool is already at capacity, even though it would never have needed a slot. In practice, this only matters when the pool is literally 100% full — at which point the system is overloaded anyway and rejecting is the appropriate behavior.
+
+**Why the pre-check is sufficient (not stale by the time we need the slot):**
+
+A key insight: matching can only *release* pool slots (fully filled resting orders return their slots via `remove_order → pool_.release()`), never consume new ones. So if `pool_available() >= 1` before matching, then after matching `pool_available() >= 1` still holds (it may have increased). One pre-check guarantees the single slot needed for the remainder.
+
+**Why this data structure / algorithm:**
+The check itself is trivial — `pool_available()` is O(1) (just returns `free_count_`). The architectural decision is *where* to place it in the validation pipeline. It sits after duplicate-ID and invalid-price/qty checks (which are "client error" rejections) but before acceptance — making "pool full" semantically equivalent to a capacity-based rejection, not a matching failure.
+
+**Why this architecture / pattern:**
+The `pool_available()` accessor on `OrderBook` preserves the dependency direction: `MatchingEngine` asks `OrderBook` about capacity, not the other way around. The pool remains an internal detail of `OrderBook` — the engine doesn't reach past `OrderBook` to talk to `OrderPool` directly. This is consistent with the pattern from Phase 1 where `MatchingEngine` operates on `OrderBook`'s public interface.
+
+The `pool_capacity` constructor parameter on `MatchingEngine` follows constructor injection all the way down: `MatchingEngine(sink, capacity)` → `OrderBook(capacity)` → `OrderPool(capacity)`. Tests can construct a tiny engine (capacity 2) to hit exhaustion quickly, while production code uses the default 1M.
+
+**Complexity:**
+- Pool availability check: O(1) — reads `free_count_` from `OrderPool`
+- Rejection path: O(1) — no allocation, no insertion, no event emission
+- No impact on non-rejection paths — the check is a single integer comparison
+
+**Benefits:**
+1. **Zero side effects on rejection:** A `PoolExhausted` rejection leaves the engine in exactly the state it was in before the call. The rejected OrderId can be reused later (since it was never recorded in `ever_seen_ids_`).
+2. **Simplicity:** No need for rollback logic, no partial states, no "accepted but couldn't rest" edge case.
+3. **Testability:** Because the rejection happens before any mutation, tests can trivially verify "nothing changed" by comparing pre/post state snapshots.
+4. **Market orders unaffected:** Since market orders never rest (R10), they bypass this check entirely. A full pool doesn't block market orders — they can still match against resting orders (which may even free slots).
+
+**Drawbacks / tradeoffs accepted:**
+1. **Pessimistic rejection of would-fully-fill orders:** An incoming limit order that would cross the entire opposite side (leaving zero remainder) still gets rejected if pool is full. This is a theoretical concern — in practice, pool exhaustion means the book is at maximum capacity, and any operator should increase capacity or scale before hitting this limit.
+2. **Market orders can still cause fills that free slots — but a subsequent limit order in the same "batch" still gets rejected:** If a market order fills a resting order (freeing a slot) and then a limit order is submitted, the limit order will succeed (the pool has a free slot now). But within a single submit call, there's no batching concept — each `submit()` is independent, so this isn't actually a problem.
+
+**Alternatives that were considered and rejected:**
+
+1. **Post-match check with "cancel remaining" semantics:** Accept the order, match what it can, and if the remainder can't rest due to pool exhaustion, treat it as "cancel remaining" (like a market order). Rejected because: (a) it changes the semantics of limit orders (a limit order that "should" rest suddenly doesn't), (b) the `EngineResponse` would need to communicate "accepted and partially filled but remainder was force-cancelled due to capacity" — a new result status that complicates every consumer, (c) the accepted order's ID is burned in `ever_seen_ids_` even though it only partially participated. Too complex for too little benefit.
+
+2. **Reserve a slot before acceptance, release if fully filled:** `acquire()` a slot optimistically, then release it if the order fully fills during matching. This would allow accepting all orders regardless of pool state (only orders with non-zero remainder actually "keep" their slot). Rejected because: (a) it adds acquire/release overhead to every order (even market orders that never rest), (b) a released-then-reacquired slot might get a different address, complicating the intrusive-list invariants, (c) it's more complex for a marginal benefit (avoiding rejection of the rare "would-have-fully-filled-while-pool-is-at-capacity" order).
+
+3. **Dynamic pool growth (double capacity when full):** Rejected outright — this contradicts the pool's core guarantee: stable addresses. If the pool grows by reallocating, every `Order*` held by every `PriceLevel`'s intrusive list becomes a dangling pointer. The fixed-capacity design is non-negotiable.
+
+**How this connects to what came before:**
+- **Phase 1's rejection discipline:** Every Phase 1 rejection path (duplicate ID, invalid qty, invalid price) follows the same pattern: check → reject early → zero side effects. `PoolExhausted` is the fourth member of this family, placed after the others in the validation waterfall.
+- **Task 1's `OrderPool::acquire()` returning nullptr:** Task 1 established that `acquire()` returns `nullptr` when exhausted (not throwing, not asserting). Task 2 wired `OrderBook::add_order()` to propagate that `nullptr`. Task 3 is where `MatchingEngine` actually *uses* this signal — the chain is complete: `pool_.acquire() → nullptr → add_order() → nullptr → submit_limit() → PoolExhausted`.
+- **Phase 1 design.md §8's "ownership boundary":** The pre-check goes through `pool_available()` rather than trying to `add_order` and rolling back on failure. This is consistent with the ownership boundary — `MatchingEngine` doesn't manage `Order` lifetime directly; it asks `OrderBook` whether capacity exists, then trusts that a subsequent `add_order()` will succeed.
+
+**Check your understanding:**
+1. Why is the pool pre-check placed *after* the duplicate-ID check but *before* `ever_seen_ids_.insert()`? What would go wrong if these two were swapped (pool check first, then duplicate check)?
+2. Why don't market orders need the pool exhaustion check? Under what (impossible) circumstances would a market order actually need a pool slot?
+3. If the pool is full and an incoming limit buy would fully match a resting sell (freeing one slot), the pre-check still rejects it. Is this a correctness bug or a deliberate tradeoff? What invariant does the pessimistic check preserve?

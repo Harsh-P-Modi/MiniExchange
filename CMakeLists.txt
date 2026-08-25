@@ -57,7 +57,7 @@ FetchContent_MakeAvailable(benchmark)
 target_include_directories(miniexchange_warnings INTERFACE ${CMAKE_SOURCE_DIR})
 
 # Libraries
-add_library(orderbook orderbook/price_level.cpp orderbook/order_book.cpp)
+add_library(orderbook orderbook/price_level.cpp orderbook/order_book.cpp orderbook/order_pool.cpp)
 target_link_libraries(orderbook PRIVATE miniexchange_warnings)
 
 add_library(engine engine/matching_engine.cpp)
@@ -95,6 +95,10 @@ gtest_discover_tests(interfaces_test)
 gtest_discover_tests(price_level_test)
 gtest_discover_tests(order_book_test)
 
+add_executable(order_pool_test tests/order_pool_test.cpp)
+target_link_libraries(order_pool_test PRIVATE GTest::gtest_main orderbook miniexchange_warnings)
+gtest_discover_tests(order_pool_test)
+
 add_executable(matching_engine_test tests/matching_engine_test.cpp)
 target_link_libraries(matching_engine_test PRIVATE GTest::gtest_main engine miniexchange_warnings)
 gtest_discover_tests(matching_engine_test)
@@ -107,9 +111,43 @@ add_executable(edge_case_test tests/edge_case_test.cpp)
 target_link_libraries(edge_case_test PRIVATE GTest::gtest_main engine miniexchange_warnings)
 gtest_discover_tests(edge_case_test)
 
+add_executable(pool_exhaustion_test tests/pool_exhaustion_test.cpp)
+target_link_libraries(pool_exhaustion_test PRIVATE GTest::gtest_main engine miniexchange_warnings)
+gtest_discover_tests(pool_exhaustion_test)
+
+# Tools libraries
+add_library(workload_generator tools/workload_generator/workload_generator.cpp)
+target_link_libraries(workload_generator PRIVATE miniexchange_warnings)
+
+# Workload generator test
+add_executable(workload_generator_test tests/workload_generator_test.cpp)
+target_link_libraries(workload_generator_test PRIVATE
+    GTest::gtest_main workload_generator miniexchange_warnings)
+gtest_discover_tests(workload_generator_test)
+
 # CLI application
 add_executable(mini_exchange
     apps/cli/main.cpp
     apps/cli/cli_parser.cpp
     apps/cli/console_printer.cpp)
 target_link_libraries(mini_exchange PRIVATE engine miniexchange_warnings)
+
+# Latency recorder test (Phase 2, Task 3) — latency_recorder.cpp is app-local,
+# compiled directly into the test executable rather than a shared library.
+add_executable(latency_recorder_test
+    tests/latency_recorder_test.cpp
+    apps/benchmark/latency_recorder.cpp)
+target_link_libraries(latency_recorder_test PRIVATE
+    GTest::gtest_main miniexchange_warnings)
+gtest_discover_tests(latency_recorder_test)
+
+# Benchmark harness (Phase 2) — NOT registered with ctest; run manually.
+add_executable(benchmark_harness
+    apps/benchmark/main.cpp
+    apps/benchmark/latency_bench.cpp
+    apps/benchmark/latency_recorder.cpp
+    apps/benchmark/results_writer.cpp
+    apps/benchmark/throughput_bench.cpp)
+target_link_libraries(benchmark_harness PRIVATE
+    benchmark::benchmark
+    engine orderbook workload_generator miniexchange_warnings)

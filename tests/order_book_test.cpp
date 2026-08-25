@@ -2,17 +2,15 @@
 
 #include <gtest/gtest.h>
 
-#include <memory>
-
 namespace miniexchange {
 namespace {
 
-// Helper: create a unique_ptr<Order> with the given fields.
-std::unique_ptr<Order> make_order(uint64_t id, Side side, int64_t price,
-                                  uint64_t qty, uint64_t seq) {
-    return std::make_unique<Order>(Order{
+// Helper: create an Order value with the given fields.
+Order make_order(uint64_t id, Side side, int64_t price,
+                 uint64_t qty, uint64_t seq) {
+    return Order{
         OrderId{id}, side, Price{price}, Quantity{qty}, Sequence{seq},
-        nullptr, nullptr, nullptr});
+        nullptr, nullptr, nullptr};
 }
 
 // --- best_bid tests ---

@@ -1,12 +1,12 @@
 #include "engine/matching_engine.hpp"
 
-#include <memory>
 #include <type_traits>
 #include <variant>
 
 namespace miniexchange {
 
-MatchingEngine::MatchingEngine(EventSink* sink) : sink_(sink) {}
+MatchingEngine::MatchingEngine(EventSink* sink, std::size_t pool_capacity)
+    : book_(pool_capacity), sink_(sink) {}
 
 EngineResponse MatchingEngine::submit(const NewOrder& order) {
     return std::visit(
@@ -64,6 +64,15 @@ EngineResponse MatchingEngine::submit_limit(const LimitOrder& order) {
         return EngineResponse{EngineResult::DuplicateOrderId, {}, Quantity{0}};
     }
 
+    // R4 (Phase 3): reject if pool exhausted — before any side effects.
+    // Pre-checking guarantees that if matching leaves a remainder, at least
+    // one slot is available to rest it. Matching can only release slots
+    // (fully filled resting orders return theirs), so availability can only
+    // increase during matching — one pre-check is sufficient.
+    if (book_.pool_available() == 0) {
+        return EngineResponse{EngineResult::PoolExhausted, {}, Quantity{0}};
+    }
+
     // Accept the order: record the ID as ever-seen.
     ever_seen_ids_.insert(order.id);
 
@@ -78,7 +87,7 @@ EngineResponse MatchingEngine::submit_limit(const LimitOrder& order) {
 
     // If there's remaining quantity after matching, rest on the book (R8).
     if (remaining > Quantity{0}) {
-        auto resting = std::make_unique<Order>(Order{
+        Order order_data{
             .id = order.id,
             .side = order.side,
             .price = order.price,
@@ -87,8 +96,8 @@ EngineResponse MatchingEngine::submit_limit(const LimitOrder& order) {
             .prev = nullptr,
             .next = nullptr,
             .level = nullptr,
-        });
-        book_.add_order(std::move(resting));
+        };
+        book_.add_order(order_data);
     }
 
     return EngineResponse{EngineResult::Accepted, std::move(trades), remaining};

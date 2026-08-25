@@ -1,6 +1,7 @@
 # Phase 3 — Requirements: Memory Pool
 
-Status: **DRAFT — spec-only pass, design.md deferred until this phase starts**
+Status: **APPROVED** — Open Questions resolved below; `design.md` and
+`tasks.md` are built on this version.
 
 ## 1. Scope
 
@@ -22,7 +23,8 @@ to be picked up later.
 ## 2. Functional Requirements (EARS)
 
 - R1: THE ENGINE SHALL pre-allocate a fixed-capacity pool of `Order`
-  slots at startup (default capacity TBD — see Open Questions).
+  slots at startup, capacity configurable at `MatchingEngine`
+  construction time, defaulting to 1,000,000 (resolved, §5 item 1).
 - R2: WHEN a new order is accepted, THE ENGINE SHALL acquire a slot
   from the pool in O(1) (free-list pop), not via `new`/heap allocation.
 - R3: WHEN an order is fully filled or cancelled, THE ENGINE SHALL
@@ -56,20 +58,21 @@ to be picked up later.
   no crash, existing resting orders unaffected).
 - Benchmark numbers recorded and compared against Phase 2 baseline.
 
-## 5. Open Questions (resolve before design.md for this phase)
+## 5. Open Questions — Resolved
 
-1. **Default pool capacity** — the original planning doc mentioned
-   1,000,000 as an example; is that the right default, or should it be
-   configurable at `MatchingEngine` construction time (recommended —
-   trivial to add, and useful for the pool-exhaustion tests)?
-2. **Free-list implementation** — intrusive free list (reuse the
-   now-unused slot's own memory to store a "next free" pointer, zero
-   extra memory) vs. a separate `std::vector<uint32_t>` of free
-   indices? The intrusive approach is more idiomatic for this kind of
-   pool and costs nothing extra, but worth confirming you want that
-   over the simpler (if slightly wasteful) vector-of-indices approach.
-3. Should the pool be a generic, reusable `Pool<T>` template (usable
-   later for `PriceLevel` nodes or elsewhere if needed), or a
-   `Order`-specific pool? A generic template is a small amount of extra
-   work now that could pay off, but risks over-engineering for a
-   single current use case.
+1. **Default pool capacity — RESOLVED: configurable at
+   `MatchingEngine` construction, default 1,000,000.** Trivial to add,
+   and directly useful for the pool-exhaustion tests (R4) — construct a
+   tiny pool in tests to hit exhaustion quickly rather than needing a
+   million-order test.
+2. **Free-list implementation — RESOLVED: intrusive free list.** Reuse
+   each unused slot's own memory to store a "next free" index/pointer —
+   zero extra memory, and consistent with the intrusive-list philosophy
+   already established for `PriceLevel` in Phase 1. No separate
+   `std::vector` of free indices.
+3. **Generic `Pool<T>` vs. `Order`-specific — RESOLVED:
+   `Order`-specific for now.** Generalizing before there's a second
+   real consumer is exactly the speculative-reuse pattern the Charter
+   warns against (contrast with `tools/workload_generator/` in Phase 2,
+   which was justified because Phase 10's reuse was already committed —
+   no such second use exists for a generic pool right now).

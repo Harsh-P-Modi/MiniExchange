@@ -1,0 +1,85 @@
+﻿[1/4] Building CXX object CMakeFiles/orderbook.dir/orderbook/order_pool.cpp.obj
+FAILED: [code=1] CMakeFiles/orderbook.dir/orderbook/order_pool.cpp.obj 
+C:\msys64\ucrt64\bin\c++.exe  -IC:/Users/harsh/Desktop/MiniExchange -g -std=c++20 -Wall -Wextra -Wpedantic -Werror -MD -MT CMakeFiles/orderbook.dir/orderbook/order_pool.cpp.obj -MF CMakeFiles\orderbook.dir\orderbook\order_pool.cpp.obj.d -o CMakeFiles/orderbook.dir/orderbook/order_pool.cpp.obj -c C:/Users/harsh/Desktop/MiniExchange/orderbook/order_pool.cpp
+In file included from C:/msys64/ucrt64/include/c++/16.1.0/memory:80,
+                 from C:/Users/harsh/Desktop/MiniExchange/orderbook/order_pool.hpp:7,
+                 from C:/Users/harsh/Desktop/MiniExchange/orderbook/order_pool.cpp:1:
+C:/msys64/ucrt64/include/c++/16.1.0/bits/unique_ptr.h: In instantiation of 'std::__detail::__unique_ptr_array_t<_Tp> std::make_unique(size_t) [with _Tp = miniexchange::Order []; __detail::__unique_ptr_array_t<_Tp> = __detail::__unique_ptr_array_t<miniexchange::Order []>; size_t = long long unsigned int]':
+C:/Users/harsh/Desktop/MiniExchange/orderbook/order_pool.cpp:14:41:   required from here
+   14 |     : storage_(std::make_unique<Order[]>(capacity)),
+      |                ~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~
+C:/msys64/ucrt64/include/c++/16.1.0/bits/unique_ptr.h:1101:30: error: use of deleted function 'miniexchange::Order::Order()'
+ 1101 |     { return unique_ptr<_Tp>(new remove_extent_t<_Tp>[__num]()); }
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from C:/Users/harsh/Desktop/MiniExchange/orderbook/order_pool.hpp:9:
+C:/Users/harsh/Desktop/MiniExchange/core/Order.hpp:24:8: note: 'miniexchange::Order::Order()' is implicitly deleted because the default definition would be ill-formed:
+   24 | struct Order {
+      |        ^~~~~
+C:/Users/harsh/Desktop/MiniExchange/core/Order.hpp:24:8: error: no matching function for call to 'miniexchange::OrderId::OrderId()'
+  ΓÇó there are 3 candidates
+In file included from C:/Users/harsh/Desktop/MiniExchange/core/Order.hpp:4:
+    ΓÇó candidate 1: 'constexpr miniexchange::OrderId::OrderId(uint64_t)'
+      C:/Users/harsh/Desktop/MiniExchange/core/Types.hpp:17:24:
+         17 |     explicit constexpr OrderId(uint64_t v) : value(v) {}
+            |                        ^~~~~~~
+      ΓÇó candidate expects 1 argument, 0 provided
+    ΓÇó candidate 2: 'constexpr miniexchange::OrderId::OrderId(const miniexchange::OrderId&)'
+      C:/Users/harsh/Desktop/MiniExchange/core/Types.hpp:14:8:
+         14 | struct OrderId {
+            |        ^~~~~~~
+      ΓÇó candidate expects 1 argument, 0 provided
+    ΓÇó candidate 3: 'constexpr miniexchange::OrderId::OrderId(miniexchange::OrderId&&)'
+      ΓÇó candidate expects 1 argument, 0 provided
+C:/Users/harsh/Desktop/MiniExchange/core/Order.hpp:24:8: error: no matching function for call to 'miniexchange::Price::Price()'
+   24 | struct Order {
+      |        ^~~~~
+  ΓÇó there are 3 candidates
+    ΓÇó candidate 1: 'constexpr miniexchange::Price::Price(int64_t)'
+      C:/Users/harsh/Desktop/MiniExchange/core/Types.hpp:32:24:
+         32 |     explicit constexpr Price(int64_t v) : value(v) {}
+            |                        ^~~~~
+      ΓÇó candidate expects 1 argument, 0 provided
+    ΓÇó candidate 2: 'constexpr miniexchange::Price::Price(const miniexchange::Price&)'
+      C:/Users/harsh/Desktop/MiniExchange/core/Types.hpp:28:8:
+         28 | struct Price {
+            |        ^~~~~
+      ΓÇó candidate expects 1 argument, 0 provided
+    ΓÇó candidate 3: 'constexpr miniexchange::Price::Price(miniexchange::Price&&)'
+      ΓÇó candidate expects 1 argument, 0 provided
+C:/Users/harsh/Desktop/MiniExchange/core/Order.hpp:24:8: error: no matching function for call to 'miniexchange::Quantity::Quantity()'
+   24 | struct Order {
+      |        ^~~~~
+  ΓÇó there are 3 candidates
+    ΓÇó candidate 1: 'constexpr miniexchange::Quantity::Quantity(uint64_t)'
+      C:/Users/harsh/Desktop/MiniExchange/core/Types.hpp:57:24:
+         57 |     explicit constexpr Quantity(uint64_t v) : value(v) {}
+            |                        ^~~~~~~~
+      ΓÇó candidate expects 1 argument, 0 provided
+    ΓÇó candidate 2: 'constexpr miniexchange::Quantity::Quantity(const miniexchange::Quantity&)'
+      C:/Users/harsh/Desktop/MiniExchange/core/Types.hpp:54:8:
+         54 | struct Quantity {
+            |        ^~~~~~~~
+      ΓÇó candidate expects 1 argument, 0 provided
+    ΓÇó candidate 3: 'constexpr miniexchange::Quantity::Quantity(miniexchange::Quantity&&)'
+      ΓÇó candidate expects 1 argument, 0 provided
+C:/Users/harsh/Desktop/MiniExchange/core/Order.hpp:24:8: error: no matching function for call to 'miniexchange::Sequence::Sequence()'
+   24 | struct Order {
+      |        ^~~~~
+  ΓÇó there are 3 candidates
+    ΓÇó candidate 1: 'constexpr miniexchange::Sequence::Sequence(uint64_t)'
+      C:/Users/harsh/Desktop/MiniExchange/core/Types.hpp:100:24:
+        100 |     explicit constexpr Sequence(uint64_t v) : value(v) {}
+            |                        ^~~~~~~~
+      ΓÇó candidate expects 1 argument, 0 provided
+    ΓÇó candidate 2: 'constexpr miniexchange::Sequence::Sequence(const miniexchange::Sequence&)'
+      C:/Users/harsh/Desktop/MiniExchange/core/Types.hpp:97:8:
+         97 | struct Sequence {
+            |        ^~~~~~~~
+      ΓÇó candidate expects 1 argument, 0 provided
+    ΓÇó candidate 3: 'constexpr miniexchange::Sequence::Sequence(miniexchange::Sequence&&)'
+      ΓÇó candidate expects 1 argument, 0 provided
+C:/msys64/ucrt64/include/c++/16.1.0/bits/unique_ptr.h:1101:30: note: use '-fdiagnostics-all-candidates' to display considered candidates
+ 1101 |     { return unique_ptr<_Tp>(new remove_extent_t<_Tp>[__num]()); }
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[2/4] Building CXX object CMakeFiles/order_pool_test.dir/tests/order_pool_test.cpp.obj
+ninja: build stopped: subcommand failed.

@@ -2,29 +2,36 @@
 
 namespace miniexchange {
 
-Order* OrderBook::add_order(std::unique_ptr<Order> order) {
-    Order* raw = order.get();
-    const Price price = raw->price;
-    const Side side = raw->side;
-    const OrderId id = raw->id;
+OrderBook::OrderBook(std::size_t pool_capacity) : pool_(pool_capacity) {}
 
-    // Transfer ownership into the owning map.
-    orders_.emplace(id, std::move(order));
+Order* OrderBook::add_order(Order order_data) {
+    // Acquire a slot from the pool (O(1) free-list pop).
+    Order* slot = pool_.acquire();
+    if (slot == nullptr) {
+        return nullptr;  // pool exhausted — caller handles this
+    }
+
+    // Copy order data into the pool slot.
+    *slot = order_data;
+
+    const Price price = slot->price;
+    const Side side = slot->side;
+    const OrderId id = slot->id;
+
+    // Insert raw pointer into the non-owning index.
+    orders_.emplace(id, slot);
 
     // Select the correct price tree based on order side.
     if (side == Side::Buy) {
-        // emplace with piecewise_construct: creates the PriceLevel in-place
-        // if it doesn't exist yet. If it does exist, this is a no-op and
-        // returns an iterator to the existing level.
         auto [it, inserted] = bids_.try_emplace(price, price);
-        it->second.push_back(raw);
+        it->second.push_back(slot);
     } else {
         auto [it, inserted] = asks_.try_emplace(price, price);
-        it->second.push_back(raw);
+        it->second.push_back(slot);
     }
 
     ++order_count_;
-    return raw;
+    return slot;
 }
 
 void OrderBook::remove_order(Order* order) {
@@ -44,8 +51,9 @@ void OrderBook::remove_order(Order* order) {
         }
     }
 
-    // Destroy the order by erasing from the owning map.
+    // Erase from the non-owning index, then release slot back to pool.
     orders_.erase(order->id);
+    pool_.release(order);
     --order_count_;
 }
 
@@ -54,7 +62,7 @@ Order* OrderBook::find_order(OrderId id) const {
     if (it == orders_.end()) {
         return nullptr;
     }
-    return it->second.get();
+    return it->second;
 }
 
 PriceLevel* OrderBook::best_bid() {

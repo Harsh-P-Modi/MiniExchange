@@ -1,6 +1,7 @@
 # Phase 2 — Requirements: Benchmark Harness + Baseline Numbers
 
-Status: **DRAFT — spec-only pass, design.md deferred until this phase starts**
+Status: **APPROVED** — Open Questions resolved below; `design.md` and
+`tasks.md` are built on this version.
 
 ## 1. Scope
 
@@ -18,7 +19,6 @@ engine state between benchmark iterations).
 
 - R1: THE HARNESS SHALL measure single-`ADD` latency (Limit order, no
   crossing liquidity — pure insert path).
-  and Trade
 - R2: THE HARNESS SHALL measure `ADD`-causing-a-match latency,
   parameterized by number of resting orders consumed (1, 10, 100) to
   show how latency scales with fill count.
@@ -55,20 +55,47 @@ engine state between benchmark iterations).
 - `benchmarks/results/phase-02-baseline.md` exists and is referenced
   from `docs/LEARNING.md` per the steering policy.
 
-## 5. Open Questions (resolve before design.md for this phase)
+## 5. Open Questions — Resolved
 
-1. **Workload generator distribution** — uniform random price around a
-   synthetic mid-price, or something closer to a real order-flow
-   distribution (e.g. geometric/log-normal price offsets, Poisson
-   arrival)? A more realistic generator is more work now but gets
-   reused by Phase 10's Strategy SDK for synthetic flow — worth
-   deciding whether to build one shared, reusable generator now, or a
-   throwaway one here and a better one later.
-2. **Machine/environment control** — do you want `taskset`/CPU-pinning
-   and disabling CPU frequency scaling/turbo boost for stable numbers
-   in this phase, or is "numbers on my laptop, caveat noted" acceptable
-   for now, with real isolation deferred to whenever you have a
-   dedicated benchmarking box?
-3. Should the benchmark harness be a reusable library other apps
-   (Phase 10's strategy runner, later ad hoc profiling) can link
-   against, or a single-purpose executable?
+1. **Workload generator distribution — RESOLVED: build the shared,
+   reasonably realistic generator now, not a throwaway.** Phase 10
+   already commits to needing the same kind of generator, so this
+   isn't speculative reuse (which would normally argue for waiting) —
+   it's already on the roadmap. Distribution: log-normal price offsets
+   around a configurable mid-price (mimics real order clustering near
+   the touch — cheap to do better than uniform), configurable quantity
+   distribution, configurable ADD/CANCEL/MARKET mix ratio, fixed seed
+   (R5). Lives in a new top-level `tools/workload_generator/` — not
+   `apps/` (it's not an executable) and not `adapters/` (it doesn't
+   translate an external protocol into `EngineAPI` calls; it generates
+   synthetic ones directly).
+2. **Machine/environment control — RESOLVED: document, don't enforce.**
+   A `scripts/run_benchmarks.sh` wrapper using `taskset` is written and
+   recommended, but the harness itself doesn't require it. Every
+   results file explicitly states whether isolation was used for that
+   run — "numbers on a laptop, caveat noted" is acceptable, dishonest
+   silence about environment is not.
+3. **Reusable library vs. single-purpose executable — RESOLVED: split
+   answer.** The *workload generator* (§ above) is the shared library,
+   since Phase 10 genuinely reuses it. The *benchmark harness itself*
+   (the `BENCHMARK()` registrations and measurement code) stays
+   `apps/benchmark`-only — Phase 10 runs strategies, not Google
+   Benchmark, so there's nothing there for it to share.
+
+## 6. Measurement Approach — R1–R3 vs. R4 (new, settled during design)
+
+Google Benchmark is well-suited to **throughput** measurement (R4:
+ops/sec under sustained load) but not natively to **percentile
+latency** reporting (R1–R3 need avg/median/P99/worst per R6, which
+Google Benchmark's standard repetition statistics don't directly give
+you). Rather than force-fit percentile reporting out of a tool that
+isn't built for it:
+- R1–R3 (single-operation latency: ADD, ADD-with-match, CANCEL) use a
+  small custom `LatencyRecorder` that captures raw per-operation
+  `std::chrono` durations into a vector and computes avg/median/P99/max
+  directly — simple, honest, and exactly matches what R6 asks for.
+- R4 (sustained throughput) uses standard Google Benchmark
+  `BENCHMARK()`/`BENCHMARK_MAIN()` macros, which are the right tool for
+  that specific measurement.
+- Both write into the same `benchmarks/results/phase-02-baseline.md`
+  (R6), just via different collection mechanisms internally.

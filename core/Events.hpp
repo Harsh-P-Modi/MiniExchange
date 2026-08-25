@@ -20,6 +20,8 @@ enum class EngineResult {
     InvalidQuantity,   // qty == 0
     InvalidPrice,      // price <= 0 (limit orders only; market orders
                        // carry no price per the NewOrder variant shape)
+    PoolExhausted,     // no free slots in the order pool — reject before
+                       // any side effects (Phase 3, requirements.md R4)
 };
 
 // EngineResponse — the synchronous return value from EngineAPI::submit
