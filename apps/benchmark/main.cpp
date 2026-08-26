@@ -1,9 +1,10 @@
-// Phase 2 — Benchmark harness entry point.
+// Benchmark harness entry point (Phase 2 design, updated for Phase 3).
 //
 // Custom main() that:
 // 1. Runs latency benchmarks (Tasks 4-6) via LatencyRecorder
 // 2. Runs a manual throughput measurement for the results file
-// 3. Writes all results to benchmarks/results/phase-02-baseline.md
+// 3. Writes results to benchmarks/results/phase-03-pooled.md with
+//    Phase 2 baseline comparison table
 // 4. Calls benchmark::RunSpecifiedBenchmarks() for Google Benchmark output
 
 #include <chrono>
@@ -156,9 +157,23 @@ int main(int argc, char** argv) {
         {"Mixed (60% limit, 10% market, 30% cancel)", throughput},
     };
 
-    const char* results_path = "benchmarks/results/phase-02-baseline.md";
+    // Phase 2 baseline values (from benchmarks/results/phase-02-baseline.md)
+    // for side-by-side comparison in the Phase 3 results file.
+    std::vector<BaselineEntry> phase2_baseline{
+        {"ADD (no match)", 900.0},
+        {"ADD (1 fill)", 600.0},
+        {"ADD (10 fills)", 2300.0},
+        {"ADD (100 fills)", 19500.0},
+        {"CANCEL (front)", 300.0},
+        {"CANCEL (back)", 200.0},
+    };
+    constexpr double kPhase2Throughput = 2'920'000.0;  // 2.92M orders/sec
+
+    const char* results_path = "benchmarks/results/phase-03-pooled.md";
     write_results(results_path, latency_results, throughput_results,
-                  "Windows laptop, no CPU pinning, no turbo-boost control");
+                  "Windows laptop, no CPU pinning, no turbo-boost control",
+                  "Phase 3 — Memory Pool Results",
+                  phase2_baseline, kPhase2Throughput);
     std::printf("Results written to: %s\n\n", results_path);
 
     // ─── Google Benchmark throughput (R4, Task 7) ──────────────────────

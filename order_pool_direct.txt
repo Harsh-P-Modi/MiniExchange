@@ -1,0 +1,32 @@
+Running main() from C:/Users/harsh/Desktop/MiniExchange/build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 10 tests from 2 test suites.
+[----------] Global test environment set-up.
+[----------] 1 test from OrderPoolDeathTest
+[ RUN      ] OrderPoolDeathTest.ReleaseOutOfRangeAssertsInDebug
+[       OK ] OrderPoolDeathTest.ReleaseOutOfRangeAssertsInDebug (260 ms)
+[----------] 1 test from OrderPoolDeathTest (260 ms total)
+
+[----------] 9 tests from OrderPoolTest
+[ RUN      ] OrderPoolTest.AcquireReturnsDistinctPointersUpToCapacity
+[       OK ] OrderPoolTest.AcquireReturnsDistinctPointersUpToCapacity (0 ms)
+[ RUN      ] OrderPoolTest.AcquirePastCapacityReturnsNullptr
+[       OK ] OrderPoolTest.AcquirePastCapacityReturnsNullptr (0 ms)
+[ RUN      ] OrderPoolTest.ReleaseThenAcquireReturnsSameAddress
+[       OK ] OrderPoolTest.ReleaseThenAcquireReturnsSameAddress (0 ms)
+[ RUN      ] OrderPoolTest.AvailableReflectsAcquireAndRelease
+[       OK ] OrderPoolTest.AvailableReflectsAcquireAndRelease (0 ms)
+[ RUN      ] OrderPoolTest.AllPointersWithinStorageRange
+[       OK ] OrderPoolTest.AllPointersWithinStorageRange (0 ms)
+[ RUN      ] OrderPoolTest.FreeListRecyclesInLIFOOrder
+[       OK ] OrderPoolTest.FreeListRecyclesInLIFOOrder (0 ms)
+[ RUN      ] OrderPoolTest.ExhaustAndFullyRecycle
+[       OK ] OrderPoolTest.ExhaustAndFullyRecycle (0 ms)
+[ RUN      ] OrderPoolTest.ZeroCapacityPoolAlwaysReturnsNullptr
+[       OK ] OrderPoolTest.ZeroCapacityPoolAlwaysReturnsNullptr (0 ms)
+[ RUN      ] OrderPoolTest.SingleSlotPool
+[       OK ] OrderPoolTest.SingleSlotPool (0 ms)
+[----------] 9 tests from OrderPoolTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 10 tests from 2 test suites ran. (260 ms total)
+[  PASSED  ] 10 tests.

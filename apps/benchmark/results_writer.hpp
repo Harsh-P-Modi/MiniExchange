@@ -21,12 +21,21 @@ struct ThroughputResult {
     double orders_per_sec;
 };
 
+/// A Phase 2 baseline entry for comparison purposes.
+struct BaselineEntry {
+    std::string label;
+    double median_ns;
+};
+
 /// Writes benchmark results to a markdown file per design.md §7 format.
 /// Creates parent directories if they don't exist.
 void write_results(const std::string& filepath,
                    const std::vector<LatencyResult>& latency_results,
                    const std::vector<ThroughputResult>& throughput_results,
-                   const std::string& environment_description);
+                   const std::string& environment_description,
+                   const std::string& title = "Phase 2 Baseline Results",
+                   const std::vector<BaselineEntry>& baseline = {},
+                   double baseline_throughput = 0.0);
 
 }  // namespace miniexchange::benchmark
 
