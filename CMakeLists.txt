@@ -141,6 +141,21 @@ target_link_libraries(latency_recorder_test PRIVATE
     GTest::gtest_main miniexchange_warnings)
 gtest_discover_tests(latency_recorder_test)
 
+# Phase 4: EngineCommand variant test (header-only, no library needed)
+add_executable(engine_command_test tests/engine_command_test.cpp)
+target_link_libraries(engine_command_test PRIVATE GTest::gtest_main miniexchange_warnings)
+gtest_discover_tests(engine_command_test)
+
+# Phase 4: SpscRingBuffer single-threaded correctness tests
+add_executable(spsc_ring_buffer_test tests/spsc_ring_buffer_test.cpp)
+target_link_libraries(spsc_ring_buffer_test PRIVATE GTest::gtest_main miniexchange_warnings)
+gtest_discover_tests(spsc_ring_buffer_test)
+
+# Phase 4: SpscRingBuffer concurrent stress test (run under TSan in CI)
+add_executable(spsc_stress_test tests/spsc_stress_test.cpp)
+target_link_libraries(spsc_stress_test PRIVATE GTest::gtest_main miniexchange_warnings)
+gtest_discover_tests(spsc_stress_test)
+
 # Benchmark harness (Phase 2) — NOT registered with ctest; run manually.
 add_executable(benchmark_harness
     apps/benchmark/main.cpp
@@ -151,3 +166,12 @@ add_executable(benchmark_harness
 target_link_libraries(benchmark_harness PRIVATE
     benchmark::benchmark
     engine orderbook workload_generator miniexchange_warnings)
+
+# Phase 4: Queue comparison benchmark (SpscRingBuffer vs MutexQueue)
+# NOT registered with ctest; run manually.
+add_executable(queue_benchmark
+    apps/benchmark/queue_bench_main.cpp
+    apps/benchmark/queue_bench.cpp
+    apps/benchmark/latency_recorder.cpp)
+target_link_libraries(queue_benchmark PRIVATE
+    workload_generator miniexchange_warnings)

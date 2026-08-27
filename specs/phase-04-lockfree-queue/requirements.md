@@ -1,6 +1,7 @@
 # Phase 4 — Requirements: Lock-Free Queue
 
-Status: **DRAFT — spec-only pass, design.md deferred until this phase starts**
+Status: **APPROVED** — Open Questions resolved below; `design.md` and
+`tasks.md` are built on this version.
 
 ## 1. Scope
 
@@ -58,18 +59,25 @@ producer/consumer test harness standing in for the real TCP thread.
   distribution (not just throughput) for both.
 - Write-up explains the memory-ordering choices, not just "it's atomic."
 
-## 5. Open Questions (resolve before design.md for this phase)
+## 5. Open Questions — Resolved
 
-1. **SPSC or MPSC?** Phase 5 introduces one TCP gateway thread (single
-   producer, fine for SPSC). But Phase 9 (FIX) and any future adapter
-   running concurrently would mean multiple producer threads feeding
-   one engine — should this queue be MPSC from the start (more complex
-   now, no rework later), or SPSC now with an explicit note that Phase
-   9 may require revisiting this design?
-2. **Back-pressure policy when full** — block the producer thread
-   (defeats some of the purpose of a lock-free queue if it can still
-   block), drop the incoming order and return a rejection upstream
-   (requires a response path back to the producer, which doesn't fully
-   exist until Phase 5), or spin-wait with a bound and then reject?
-3. **Ring buffer capacity** — what's a reasonable default, and should
-   it be configurable per adapter, or fixed globally?
+1. **SPSC or MPSC — RESOLVED: SPSC now.** Phase 5 introduces exactly
+   one TCP gateway I/O thread, so SPSC is sufficient through Phase 8.
+   Documented explicitly as planned future rework: Phase 9 (FIX)
+   introduces a second concurrent adapter thread, at which point this
+   queue genuinely needs revisiting (either a second SPSC queue per
+   producer thread with the engine polling both, or an actual MPSC
+   structure) — flagging now so Phase 9 doesn't rediscover this from
+   scratch.
+2. **Back-pressure policy — RESOLVED: reject, don't block.** The
+   producer's `try_push` returns `false` on a full queue; the caller
+   (whichever adapter) is responsible for translating that into
+   whatever rejection its protocol supports. Blocking would defeat part
+   of the point of using a lock-free queue in the first place, and a
+   bounded spin-then-reject is just a slower way of arriving at the
+   same "reject" outcome — reject immediately.
+3. **Ring buffer capacity — RESOLVED: 4096, and it's a compile-time
+   template parameter, not a runtime value** (see `design.md` §6 item 1
+   for why). Different call sites can use different capacities by
+   instantiating the template differently; there's no single global
+   value being fixed.

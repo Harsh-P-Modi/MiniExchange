@@ -1,6 +1,8 @@
 # Phase 5 — Requirements: TCP Order Gateway
 
-Status: **DRAFT — spec-only pass, design.md deferred until this phase starts**
+Status: **APPROVED** — Open Questions resolved below; R6 also
+corrected (see below) — `design.md` and `tasks.md` are built on this
+version.
 
 ## 1. Scope
 
@@ -38,11 +40,23 @@ deciding, since it affects this phase's design non-trivially.
   which) and buffer partial reads until a complete message is
   available before parsing.
 - R5: WHEN a complete order message is parsed, THE SERVER SHALL
-  translate it into a `NewOrder`/cancel call reaching the engine via
-  the Phase 4 queue, tagged with enough session/client information to
-  route the eventual response back correctly.
-- R6: THE SERVER SHALL implement `EventSink` to route `EngineResponse`-
-  equivalent notifications back to the originating client's socket.
+  translate it into an `EngineCommand` (Phase 4) tagged with the
+  originating connection's `ClientId`, and push it onto the Phase 4
+  queue toward the engine thread.
+- R6 (corrected — see note below): THE SERVER SHALL route each
+  `EngineResponse` back to the specific client whose command produced
+  it, via a dedicated response channel — **not** via `EventSink`.
+  `EventSink` (Phase 1) is a broadcast port for "anyone interested in
+  everything that happens" (Phase 6's market-data feed, benchmark
+  counters); it has no concept of "reply to the specific caller," and
+  nothing about it changes here. Routing *your own* response back to
+  *you* is a different mechanism: see `design.md` §3 for the
+  `TaggedResponse` return queue this actually requires. (This
+  correction matters because the original wording would have led to
+  conflating two ports that need to stay separate — an adapter that
+  wants both its own responses *and* a broadcast feed of everyone
+  else's activity needs to use both mechanisms, not one doing double
+  duty.)
 - R7: Benchmark: round-trip latency (client sends order → server
   parses → engine matches → response serialized → client receives),
   end to end, not just the engine-internal portion measured in Phase 2.
@@ -61,22 +75,30 @@ deciding, since it affects this phase's design non-trivially.
 - `ClientId` (or equivalent) design decision made explicitly and
   documented (ADR), given the Phase 8 dependency flagged above.
 
-## 5. Open Questions (resolve before design.md for this phase)
+## 5. Open Questions — Resolved
 
-1. **Wire format for this phase** — reuse the Phase 1 CLI's plaintext
-   grammar (`ADD <id> BUY <price> <qty>`, etc.) over TCP for now, with
-   Phase 7 introducing and comparing a binary format afterward? Or is
-   it worth defining the binary format now and treating Phase 7 purely
-   as "add a JSON comparison for the write-up"? Reusing the plaintext
-   grammar is less work now and keeps Phase 7's before/after comparison
-   cleaner (plaintext-over-TCP vs. binary vs. JSON, three real data
-   points instead of two).
-2. **Message framing** — newline-delimited (simple, works fine for a
-   text grammar) vs. length-prefixed (works for both text and future
-   binary, more "real protocol" shaped)? Leaning length-prefixed since
-   it's the pattern Phase 7's binary protocol will need anyway.
-3. **`ClientId` introduction** (see flag above) — confirm this is the
-   right phase for it, and roughly: is a `ClientId` just "which TCP
-   connection," or should it persist across reconnects (implying some
-   session/auth concept that doesn't exist yet and may be overkill for
-   a portfolio project)?
+1. **Wire format — RESOLVED: reuse Phase 1's CLI plaintext grammar
+   over TCP for this phase.** Phase 7 introduces and compares binary
+   separately, keeping that comparison clean (plaintext-over-TCP vs.
+   binary vs. JSON — three real data points instead of two).
+2. **Message framing — RESOLVED: length-prefixed** (4-byte big-endian
+   length + payload). Works for both this phase's text grammar and
+   Phase 7's future binary payloads, unlike newline-delimited framing.
+3. **`ClientId` — RESOLVED: introduced here, one per accepted TCP
+   connection.** Ephemeral, tied to the socket/connection, not
+   persisted across reconnects — no session/auth concept, which this
+   project doesn't need. Lives in `core/Types.hpp` (a fundamental type,
+   even though this phase is what first requires it) since Phase 8 and
+   Phase 9 both consume it later.
+
+## 6. Improvement — extracting the shared plaintext-grammar parser
+
+Phase 1's `CLIParser`/`ConsolePrinter` live entirely inside
+`apps/cli/`, per the rule in `.kiro/steering/structure.md`: "extract to
+`adapters/` only once something is actually reused, not
+speculatively." That trigger has now arrived — this phase needs the
+*exact same* ADD/CANCEL/MARKET/PRINT_BOOK grammar over TCP. Rather than
+duplicate the parser/renderer inside `adapters/tcp/`, this phase
+extracts them into a new `adapters/text_protocol/` library that both
+`apps/cli/` (refactored) and `adapters/tcp/` depend on. See `design.md`
+§2 for the exact shape.

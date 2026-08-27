@@ -14,6 +14,7 @@ namespace miniexchange {
 struct OrderId {
     uint64_t value;
 
+    constexpr OrderId() : value(0) {}
     explicit constexpr OrderId(uint64_t v) : value(v) {}
 
     // Comparison operators for container usage (unordered_map, etc.)
@@ -29,6 +30,7 @@ struct Price {
     int64_t value;  // signed — allows negative spread calculations later,
                     // though resting orders must have value > 0
 
+    constexpr Price() : value(0) {}
     explicit constexpr Price(int64_t v) : value(v) {}
 
     constexpr bool operator==(const Price& other) const {
@@ -54,6 +56,7 @@ struct Price {
 struct Quantity {
     uint64_t value;
 
+    constexpr Quantity() : value(0) {}
     explicit constexpr Quantity(uint64_t v) : value(v) {}
 
     constexpr bool operator==(const Quantity& other) const {
@@ -97,6 +100,7 @@ enum class Side { Buy, Sell };
 struct Sequence {
     uint64_t value;
 
+    constexpr Sequence() : value(0) {}
     explicit constexpr Sequence(uint64_t v) : value(v) {}
 
     constexpr bool operator==(const Sequence& other) const {
@@ -124,6 +128,7 @@ struct Sequence {
 struct TradeSequence {
     uint64_t value;
 
+    constexpr TradeSequence() : value(0) {}
     explicit constexpr TradeSequence(uint64_t v) : value(v) {}
 
     constexpr bool operator==(const TradeSequence& other) const {

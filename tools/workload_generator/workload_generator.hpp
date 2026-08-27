@@ -3,10 +3,9 @@
 
 #include <cstdint>
 #include <random>
-#include <variant>
 #include <vector>
 
-#include "core/NewOrder.hpp"
+#include "core/EngineCommand.hpp"
 #include "core/Types.hpp"
 
 namespace miniexchange {
@@ -25,18 +24,13 @@ struct WorkloadConfig {
     double cancel_ratio;
 };
 
-// CancelRequest — a workload-generation-only type representing a cancel
-// action. Not part of core/ because the engine's EngineAPI::cancel()
-// takes a bare OrderId; this struct gives WorkloadEvent's variant a
-// distinct alternative for std::visit dispatch.
-struct CancelRequest {
-    OrderId id;
-};
-
 // WorkloadEvent — one synthetic event the generator can produce.
-// Separate from NewOrder because CANCEL needs to reference a previously
-// generated, still-resting OrderId.
-using WorkloadEvent = std::variant<LimitOrder, MarketOrder, CancelRequest>;
+// Phase 4 tidy-up: aliased to EngineCommand (the canonical engine-facing
+// command variant from core/EngineCommand.hpp), which carries the same
+// three alternatives: LimitOrder, MarketOrder, CancelRequest. The local
+// CancelRequest definition that previously lived here has been removed —
+// CancelRequest is now the canonical one from core/EngineCommand.hpp.
+using WorkloadEvent = EngineCommand;
 
 // WorkloadGenerator — produces deterministic sequences of synthetic
 // exchange events for benchmarking and (later) strategy testing.
