@@ -22,6 +22,15 @@ struct Trade {
     Price price;                   // execution price (always the resting
                                    // order's price per requirements.md R6)
     Quantity quantity;             // filled quantity for this trade
+    bool resting_order_removed;    // true if this trade fully consumed the
+                                   // resting (passive) counterparty order,
+                                   // so it is no longer in the book after
+                                   // this fill; false if the resting order
+                                   // was only partially filled and still
+                                   // rests. Used by the UDP feed publisher
+                                   // (Phase 6) to track order count at the
+                                   // best price level without maintaining
+                                   // full depth.
 };
 
 }  // namespace miniexchange

@@ -171,7 +171,7 @@ TEST(OutboundQueueTest, PushPopResponse) {
     resp.response.trades.push_back(miniexchange::Trade{
         miniexchange::TradeSequence{1}, miniexchange::OrderId{10},
         miniexchange::OrderId{20}, miniexchange::Price{100},
-        miniexchange::Quantity{5}});
+        miniexchange::Quantity{5}, false});
 
     ASSERT_TRUE(queue.try_push(std::move(resp)));
 

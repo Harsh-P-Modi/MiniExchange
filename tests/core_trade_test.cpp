@@ -11,7 +11,8 @@ TEST(CoreTradeTest, ConstructAndReadFields) {
         OrderId{1001},     // buy_order_id
         OrderId{2002},     // sell_order_id
         Price{10000},
-        Quantity{50}
+        Quantity{50},
+        false              // resting_order_removed
     };
 
     // Verify all fields are readable and correct
@@ -28,7 +29,8 @@ TEST(CoreTradeTest, MultipleTradesDistinct) {
         OrderId{100},
         OrderId{200},
         Price{9950},
-        Quantity{10}
+        Quantity{10},
+        true               // resting_order_removed
     };
 
     Trade trade2{
@@ -36,7 +38,8 @@ TEST(CoreTradeTest, MultipleTradesDistinct) {
         OrderId{300},
         OrderId{400},
         Price{9960},
-        Quantity{25}
+        Quantity{25},
+        false              // resting_order_removed
     };
 
     // Verify trades maintain distinct values

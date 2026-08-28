@@ -63,6 +63,8 @@ struct OrderAccepted {
     OrderId id;
     Side side;
     Quantity quantity;  // the original submitted quantity, before any fills
+    Price price;        // the order's limit price (Price{0} for market orders,
+                        // which carry no price per the NewOrder variant shape)
 };
 
 // OrderCancelled — EventSink::on_order_cancelled payload. Emitted exactly
@@ -78,6 +80,9 @@ struct OrderCancelled {
                              // cancelled at price Y" without needing to
                              // reconstruct the order's last-known state
                              // separately
+    Side side;               // which side of the book (needed by feed
+                             // publishers to know which best to check)
+    Price price;             // the price level the order was resting at
 };
 
 // Note: Trade (from Trade.hpp) doubles as the EventSink::on_trade payload

@@ -1,6 +1,6 @@
 # Phase 7 — Requirements: Binary Wire Protocol
 
-Status: **DRAFT — spec-only pass, design.md deferred until this phase starts**
+Status: **APPROVED — open questions resolved, see below; design.md follows**
 
 ## 1. Scope
 
@@ -23,15 +23,15 @@ faster."
   loss (property/fuzz-testable: encode then decode returns the
   original value for a wide range of inputs).
 - R3: A JSON ENCODER/DECODER SHALL be implemented for the same message
-  types, using a single well-known library (see Open Questions),
-  solely to produce a fair comparison baseline — this is not intended
-  to become a supported production wire format.
+  types, using `nlohmann/json`, solely to produce a fair comparison
+  baseline — this is not intended to become a supported production
+  wire format.
 - R4: Benchmark: encode latency, decode latency, and payload size in
   bytes, binary vs. JSON, for each message type, recorded in the same
   results format as prior phases' benchmarks.
-- R5: Phase 5's TCP gateway SHALL be updated to use the binary protocol
-  as its primary format (see Open Questions for whether plaintext is
-  kept as a fallback/debug mode).
+- R5: Phase 5's TCP gateway SHALL be updated to support the binary
+  protocol as its primary format, with the existing plaintext protocol
+  retained as an explicit debug/dev mode (see resolution below).
 
 ## 3. Non-Functional Requirements
 
@@ -43,27 +43,23 @@ faster."
 ## 4. Definition of Done
 
 - Round-trip tests pass for both encoders.
+- Zero-heap-allocation claim (NFR1) verified by an instrumented
+  allocation count in tests, not just asserted.
 - Comparison benchmark numbers recorded and written up with an honest
   interpretation (e.g. if JSON's disadvantage is dominated by
   allocation rather than parsing, say so — per the Charter, the
   numbers should be understood, not just reported).
 
-## 5. Open Questions (resolve before design.md for this phase)
+## 5. Open Questions — RESOLVED
 
-1. **JSON library** — this is the first phase needing an external
-   dependency beyond GoogleTest/Benchmark. `nlohmann/json` is the
-   standard choice (header-only, well-known, easy via CMake
-   `FetchContent`) — confirm you're fine adding this dependency, since
-   the Charter's "no dependencies beyond the locked stack" implicitly
-   assumed test/benchmark libraries only until now.
-2. **Endianness** — little-endian (matches x86/most dev machines,
-   simplest) with an explicit note that a "real" cross-platform
-   protocol would need network byte order — or actually implement
-   network byte order (`htons`/`htonl`-equivalent) for correctness
-   points in the write-up? Leaning toward actually doing it correctly
-   given how cheap it is, but flagging since it's extra work for a
-   single-machine dev/demo setup.
-3. **Does plaintext stay as a fallback?** Keeping the Phase 5 plaintext
-   parser around as a debug/dev-only mode costs little and is
-   genuinely useful for manual testing with `netcat`, but adds a
-   little surface area to maintain.
+1. **JSON library** → `nlohmann/json`, added via CMake `FetchContent`.
+   First external dependency beyond test/benchmark tooling — accepted
+   as a deliberate, scoped exception, not a precedent for adding
+   dependencies freely in later phases.
+2. **Endianness** → Network byte order, implemented properly (not
+   little-endian-only with a caveat). See design.md §2 for the
+   byte-swap approach for the project's wider-than-32-bit domain
+   types.
+3. **Plaintext fallback** → Kept, as an explicit debug/dev mode
+   selected at server startup (not per-connection negotiation — see
+   design.md §5 for why). Binary is the primary/default protocol.

@@ -1,0 +1,5 @@
+if(EXISTS "C:/Users/harsh/Desktop/MiniExchange/build_check/udp_book_builder_test_e3b0c442_tests.cmake")
+  include("C:/Users/harsh/Desktop/MiniExchange/build_check/udp_book_builder_test_e3b0c442_tests.cmake")
+else()
+  add_test(udp_book_builder_test_NOT_BUILT udp_book_builder_test_NOT_BUILT)
+endif()

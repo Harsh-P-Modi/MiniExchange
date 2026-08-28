@@ -32,14 +32,16 @@ EngineResponse MatchingEngine::cancel(OrderId id) {
         return EngineResponse{EngineResult::UnknownOrderId, {}, Quantity{0}};
     }
 
-    // Capture remaining quantity before removal destroys the Order.
+    // Capture fields before removal destroys the Order.
     Quantity remaining = order->quantity;
+    Side side = order->side;
+    Price price = order->price;
 
     // R12: remove from book (O(1) via intrusive list + hash map).
     book_.remove_order(order);
 
     // R18: emit on_order_cancelled exactly once (R20: synchronous).
-    sink_->on_order_cancelled(OrderCancelled{id, remaining});
+    sink_->on_order_cancelled(OrderCancelled{id, remaining, side, price});
 
     return EngineResponse{EngineResult::Accepted, {}, remaining};
 }
@@ -78,7 +80,7 @@ EngineResponse MatchingEngine::submit_limit(const LimitOrder& order) {
 
     // Emit on_order_accepted (R16) — emitted before matching begins.
     sink_->on_order_accepted(
-        OrderAccepted{order.id, order.side, order.quantity});
+        OrderAccepted{order.id, order.side, order.quantity, order.price});
 
     // Perform matching against opposite side (R5-R8).
     Quantity remaining = order.quantity;
@@ -119,7 +121,7 @@ EngineResponse MatchingEngine::submit_market(const MarketOrder& order) {
 
     // Emit on_order_accepted (R16) — emitted before matching begins.
     sink_->on_order_accepted(
-        OrderAccepted{order.id, order.side, order.quantity});
+        OrderAccepted{order.id, order.side, order.quantity, Price{0}});
 
     // Perform matching against opposite side with NO price limit (R9).
     // std::nullopt means the market order crosses all available levels.
@@ -172,6 +174,11 @@ std::vector<Trade> MatchingEngine::match_against_book(
                                     ? remaining
                                     : resting->quantity;
 
+            // Will this trade fully consume the resting order? Computed
+            // before the quantity decrement so the publisher (Phase 6)
+            // can track order count at the best price level.
+            bool fully_consumed = (fill_qty == resting->quantity);
+
             // Build the Trade (R6: at resting order's price).
             OrderId buy_id = (incoming_side == Side::Buy)
                                  ? incoming_id
@@ -186,6 +193,7 @@ std::vector<Trade> MatchingEngine::match_against_book(
                 .sell_order_id = sell_id,
                 .price = resting->price,
                 .quantity = fill_qty,
+                .resting_order_removed = fully_consumed,
             };
 
             trades.push_back(trade);
@@ -204,7 +212,7 @@ std::vector<Trade> MatchingEngine::match_against_book(
             level->reduce_quantity(fill_qty);
 
             // R7: fully consumed resting order removed from book.
-            if (resting->quantity == Quantity{0}) {
+            if (fully_consumed) {
                 book_.remove_order(resting);
             }
         }

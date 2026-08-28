@@ -33,7 +33,8 @@ TEST(EventsTest, EngineResponseConstruction) {
         OrderId(100),
         OrderId(200),
         Price(10000),
-        Quantity(50)
+        Quantity(50),
+        false              // resting_order_removed
     };
 
     EngineResponse response{
@@ -67,33 +68,39 @@ TEST(EventsTest, OrderAcceptedConstruction) {
     OrderAccepted event{
         OrderId(42),
         Side::Buy,
-        Quantity(100)
+        Quantity(100),
+        Price(5000)
     };
 
     // Verify field access
     EXPECT_EQ(event.id, OrderId(42));
     EXPECT_EQ(event.side, Side::Buy);
     EXPECT_EQ(event.quantity, Quantity(100));
+    EXPECT_EQ(event.price, Price(5000));
 }
 
 TEST(EventsTest, OrderCancelledConstruction) {
     OrderCancelled event{
         OrderId(99),
-        Quantity(75)
+        Quantity(75),
+        Side::Sell,
+        Price(4200)
     };
 
     // Verify field access
     EXPECT_EQ(event.id, OrderId(99));
     EXPECT_EQ(event.remaining_qty, Quantity(75));
+    EXPECT_EQ(event.side, Side::Sell);
+    EXPECT_EQ(event.price, Price(4200));
 }
 
 TEST(EventsTest, MultipleTradesInResponse) {
     // Response with multiple fills (incoming order crossed multiple
     // resting orders)
     std::vector<Trade> trades;
-    trades.push_back({TradeSequence(10), OrderId(1), OrderId(2), Price(100), Quantity(10)});
-    trades.push_back({TradeSequence(11), OrderId(1), OrderId(3), Price(99), Quantity(20)});
-    trades.push_back({TradeSequence(12), OrderId(1), OrderId(4), Price(98), Quantity(15)});
+    trades.push_back({TradeSequence(10), OrderId(1), OrderId(2), Price(100), Quantity(10), true});
+    trades.push_back({TradeSequence(11), OrderId(1), OrderId(3), Price(99), Quantity(20), true});
+    trades.push_back({TradeSequence(12), OrderId(1), OrderId(4), Price(98), Quantity(15), false});
 
     EngineResponse response{
         EngineResult::Accepted,

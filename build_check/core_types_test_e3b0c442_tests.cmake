@@ -1,136 +1,64 @@
-add_test([=[CoreTypesTest.NoImplicitConversion]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=CoreTypesTest.NoImplicitConversion]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[CoreTypesTest.NoImplicitConversion]=]
+add_test([=[PoolExhaustionTest.ThirdOrderRejectedWhenPoolFull]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=PoolExhaustionTest.ThirdOrderRejectedWhenPoolFull]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[PoolExhaustionTest.ThirdOrderRejectedWhenPoolFull]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/core_types_test.cpp:14]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/pool_exhaustion_test.cpp:47]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
 )
-add_test([=[CoreTypesTest.OrderIdConstruction]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=CoreTypesTest.OrderIdConstruction]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[CoreTypesTest.OrderIdConstruction]=]
+add_test([=[PoolExhaustionTest.RejectedOrderIdNotRecorded]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=PoolExhaustionTest.RejectedOrderIdNotRecorded]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[PoolExhaustionTest.RejectedOrderIdNotRecorded]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/core_types_test.cpp:35]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/pool_exhaustion_test.cpp:68]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
 )
-add_test([=[CoreTypesTest.PriceComparison]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=CoreTypesTest.PriceComparison]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[CoreTypesTest.PriceComparison]=]
+add_test([=[PoolExhaustionTest.NoEventsEmittedOnRejection]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=PoolExhaustionTest.NoEventsEmittedOnRejection]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[PoolExhaustionTest.NoEventsEmittedOnRejection]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/core_types_test.cpp:45]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/pool_exhaustion_test.cpp:92]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
 )
-add_test([=[CoreTypesTest.QuantityArithmetic]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=CoreTypesTest.QuantityArithmetic]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[CoreTypesTest.QuantityArithmetic]=]
+add_test([=[PoolExhaustionTest.BookUnchangedAfterRejection]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=PoolExhaustionTest.BookUnchangedAfterRejection]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[PoolExhaustionTest.BookUnchangedAfterRejection]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/core_types_test.cpp:57]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/pool_exhaustion_test.cpp:115]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
 )
-add_test([=[CoreTypesTest.SequenceIncrement]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=CoreTypesTest.SequenceIncrement]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[CoreTypesTest.SequenceIncrement]=]
+add_test([=[PoolExhaustionTest.CancelFreesSlotAndNextAddSucceeds]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=PoolExhaustionTest.CancelFreesSlotAndNextAddSucceeds]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[PoolExhaustionTest.CancelFreesSlotAndNextAddSucceeds]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/core_types_test.cpp:74]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/pool_exhaustion_test.cpp:136]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
 )
-add_test([=[CoreTypesTest.TradeSequenceIncrement]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=CoreTypesTest.TradeSequenceIncrement]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[CoreTypesTest.TradeSequenceIncrement]=]
+add_test([=[PoolExhaustionTest.FullFillFreesSlotForNextOrder]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=PoolExhaustionTest.FullFillFreesSlotForNextOrder]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[PoolExhaustionTest.FullFillFreesSlotForNextOrder]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/core_types_test.cpp:84]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/pool_exhaustion_test.cpp:162]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
 )
-add_test([=[CoreTypesTest.SideEnum]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=CoreTypesTest.SideEnum]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[CoreTypesTest.SideEnum]=]
+add_test([=[PoolExhaustionTest.MarketOrderNotBlockedByPoolExhaustion]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=PoolExhaustionTest.MarketOrderNotBlockedByPoolExhaustion]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[PoolExhaustionTest.MarketOrderNotBlockedByPoolExhaustion]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/core_types_test.cpp:94]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/pool_exhaustion_test.cpp:185]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
 )
-add_test([=[CoreTypesTest.OrderIdHashable]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=CoreTypesTest.OrderIdHashable]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[CoreTypesTest.OrderIdHashable]=]
-  PROPERTIES
-    
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/core_types_test.cpp:103]==]
-    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
-    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
-    
-)
-add_test([=[ClientIdTest.NoImplicitConstruction]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=ClientIdTest.NoImplicitConstruction]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[ClientIdTest.NoImplicitConstruction]=]
-  PROPERTIES
-    
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/core_types_test.cpp:118]==]
-    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
-    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
-    
-)
-add_test([=[ClientIdTest.NoImplicitConversionToUint64]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=ClientIdTest.NoImplicitConversionToUint64]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[ClientIdTest.NoImplicitConversionToUint64]=]
-  PROPERTIES
-    
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/core_types_test.cpp:124]==]
-    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
-    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
-    
-)
-add_test([=[ClientIdTest.EqualityAndInequality]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=ClientIdTest.EqualityAndInequality]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[ClientIdTest.EqualityAndInequality]=]
-  PROPERTIES
-    
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/core_types_test.cpp:130]==]
-    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
-    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
-    
-)
-add_test([=[ClientIdTest.HashConsistency]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=ClientIdTest.HashConsistency]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[ClientIdTest.HashConsistency]=]
-  PROPERTIES
-    
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/core_types_test.cpp:141]==]
-    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
-    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
-    
-)
-add_test([=[ClientIdTest.UsableAsUnorderedMapKey]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=ClientIdTest.UsableAsUnorderedMapKey]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[ClientIdTest.UsableAsUnorderedMapKey]=]
-  PROPERTIES
-    
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/core_types_test.cpp:156]==]
-    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
-    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
-    
-)
-add_test([=[ClientIdTest.UsableInUnorderedSet]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=ClientIdTest.UsableInUnorderedSet]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[ClientIdTest.UsableInUnorderedSet]=]
-  PROPERTIES
-    
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/core_types_test.cpp:168]==]
-    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
-    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
-    
-)
-add_test([=[ClientIdTest.DistinctFromOrderId]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test.exe [==[--gtest_filter=ClientIdTest.DistinctFromOrderId]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[ClientIdTest.DistinctFromOrderId]=]
-  PROPERTIES
-    
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/core_types_test.cpp:180]==]
-    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
-    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
-    
-)
-set(core_types_test_TESTS [==[CoreTypesTest.NoImplicitConversion]==] [==[CoreTypesTest.OrderIdConstruction]==] [==[CoreTypesTest.PriceComparison]==] [==[CoreTypesTest.QuantityArithmetic]==] [==[CoreTypesTest.SequenceIncrement]==] [==[CoreTypesTest.TradeSequenceIncrement]==] [==[CoreTypesTest.SideEnum]==] [==[CoreTypesTest.OrderIdHashable]==] [==[ClientIdTest.NoImplicitConstruction]==] [==[ClientIdTest.NoImplicitConversionToUint64]==] [==[ClientIdTest.EqualityAndInequality]==] [==[ClientIdTest.HashConsistency]==] [==[ClientIdTest.UsableAsUnorderedMapKey]==] [==[ClientIdTest.UsableInUnorderedSet]==] [==[ClientIdTest.DistinctFromOrderId]==])
+set(core_types_test_TESTS [==[PoolExhaustionTest.ThirdOrderRejectedWhenPoolFull]==] [==[PoolExhaustionTest.RejectedOrderIdNotRecorded]==] [==[PoolExhaustionTest.NoEventsEmittedOnRejection]==] [==[PoolExhaustionTest.BookUnchangedAfterRejection]==] [==[PoolExhaustionTest.CancelFreesSlotAndNextAddSucceeds]==] [==[PoolExhaustionTest.FullFillFreesSlotForNextOrder]==] [==[PoolExhaustionTest.MarketOrderNotBlockedByPoolExhaustion]==])

@@ -4440,3 +4440,249 @@ This lives in `adapters/tcp/` (not `engine/` or `core/`) because connection life
 1. What would happen if `close_connection` called `::close(fd)` *before* `::epoll_ctl(EPOLL_CTL_DEL, fd, ...)`? Under what (admittedly unlikely) timing could this cause a bug? (Hint: think about what happens if `accept()` returns the same fd number in between.)
 2. Why is it safe to call `close_connection(fd)` from inside `handle_read(fd)` (i.e., in the middle of processing events for that fd)? What would break if the event loop iterated over `connections_` directly instead of the `events[]` array?
 3. The destructor (`~TcpServer`) also closes all connection fds but does *not* call `epoll_ctl(EPOLL_CTL_DEL)` for each one. Why is that safe? (Hint: what happens to the epoll instance itself in the destructor?)
+
+## Phase 6: UDP Market Data Feed
+
+### Task 1 — Core Event/Trade Enrichment + `SymbolId`
+
+**What it does:**
+Adds three things to the core domain types that Phase 6's UDP feed publisher needs in order to derive top-of-book state purely from `EventSink` callbacks, without ever querying the engine's `OrderBook` directly:
+
+1. **`SymbolId`** — a new strong-typed domain primitive identifying which instrument a message refers to. Even though the engine is currently single-symbol, the wire format is forward-compatible with Phase 10+ multi-symbol scenarios.
+2. **`Price` on `OrderAccepted` and `Price`+`Side` on `OrderCancelled`** — the original event payloads didn't carry enough information for *any* `EventSink` consumer to determine whether an accept or cancel changed top-of-book. This enrichment closes that gap.
+3. **`bool resting_order_removed` on `Trade`** — tells the publisher whether a fill fully consumed the resting counterparty order (removed from book) or only partially filled it (still resting). Without this, the publisher can't maintain an accurate order *count* at its tracked best price.
+
+**Exact locations:**
+- `core/Types.hpp:155–167` — `SymbolId` struct definition (wrapper around `uint32_t`)
+- `core/Types.hpp:185–190` — `std::hash<SymbolId>` specialization
+- `core/Events.hpp:66` — `Price price` field added to `OrderAccepted`
+- `core/Events.hpp:79–81` — `Side side` and `Price price` fields added to `OrderCancelled`
+- `core/Trade.hpp:24–32` — `bool resting_order_removed` field added to `Trade`
+- `engine/matching_engine.cpp:38–40` — cancel path captures `side` and `price` before `remove_order` destroys the `Order`
+- `engine/matching_engine.cpp:44` — `OrderCancelled` construction now passes all four fields
+- `engine/matching_engine.cpp:83` — limit order's `OrderAccepted` includes `order.price`
+- `engine/matching_engine.cpp:118` — market order's `OrderAccepted` uses `Price{0}` (no limit price)
+- `engine/matching_engine.cpp:172` — `bool fully_consumed = (fill_qty == resting->quantity)` computed before the quantity decrement
+- `engine/matching_engine.cpp:184–190` — `Trade` construction includes `.resting_order_removed = fully_consumed`
+- `engine/matching_engine.cpp:206` — the `if (resting->quantity == Quantity{0})` check rewritten as `if (fully_consumed)` to reuse the same boolean
+
+**Why this is a `core/` change and not a Phase-6-local one:**
+
+The payload gap isn't specific to the UDP feed — it would block *any* `EventSink` consumer that wanted to know about book state changes (a logging adapter, a risk engine, a benchmark counter tracking top-of-book). The problem is that `EventSink::on_order_accepted` was called with `{id, side, quantity}` but no price, so no consumer could tell whether the new order was at the best (changing top-of-book) or deep in the book (irrelevant). Similarly, `on_order_cancelled` had `{id, remaining_qty}` with no way to determine which side or price was affected.
+
+If Phase 6 "solved" this by reaching into `OrderBook` directly, it would undermine the entire point of `EventSink` as a decoupled output port — the book-builder acceptance test (R3) proves the feed is sufficient by showing a subscriber can reconstruct book state from events alone. Giving the publisher private access to the book would be an architectural shortcut that makes R3's test vacuously true.
+
+**Why `resting_order_removed` specifically:**
+
+The publisher tracks how many *orders* are resting at its tracked best price (`count`) to know when a price level has drained completely. When `count` reaches zero, it publishes "no known best on this side" rather than guessing what's behind the drained level. Without `resting_order_removed`, the publisher sees a `Trade` with `{price, quantity}` but can't distinguish:
+- A partial fill (resting order still exists at that price, `count` unchanged)
+- A full fill (resting order removed, `count` should decrement)
+
+This is the exact information needed, and it's information the engine already has at trade-generation time — it's the same fact that determines whether `book_.remove_order(resting)` is called. The field just makes that fact visible to downstream consumers.
+
+**The construction-order subtlety:**
+
+In `engine/matching_engine.cpp`'s matching loop, the `Trade` struct is constructed and emitted via `sink_->on_trade(trade)` *before* `resting->quantity -= fill_qty` happens. This means we compute `fully_consumed = (fill_qty == resting->quantity)` at Trade construction time, while `resting->quantity` still holds its pre-decrement value. If we computed it after the decrement, the answer would always be `resting->quantity == 0`, which is the same thing — but the code reads more clearly as a pre-check, and the `fully_consumed` variable is reused later for the removal decision (`if (fully_consumed) { book_.remove_order(resting); }`) which avoids a redundant comparison.
+
+**Why `SymbolId` is a wrapper struct and not a bare `using` alias:**
+
+Every other domain primitive in `core/Types.hpp` — `OrderId`, `ClientId`, `Price`, `Quantity`, `Sequence`, `TradeSequence` — is a strong-typed wrapper struct that prevents accidental mixing with raw integers. A bare `using SymbolId = uint32_t;` would let you pass any `uint32_t` (a port number, a buffer size, a file descriptor) where a `SymbolId` is expected without a compile error. The wrapper costs zero runtime (it's trivially copyable, same size, same alignment) but catches type confusion at compile time. Since `BookBuilder` uses `std::unordered_map<SymbolId, PerSymbolState>`, a `std::hash<SymbolId>` specialization is also required — without it, the map wouldn't compile.
+
+**Why `Price{0}` for market orders in `OrderAccepted`:**
+
+Market orders have no limit price by definition (they cross all available levels). The `NewOrder` variant represents this structurally: `MarketOrder` doesn't carry a `Price` field at all (vs. `LimitOrder` which does). The publisher uses `Price{0}` as a sentinel meaning "this order doesn't have a meaningful price" — since valid resting prices must be `> 0` (enforced by the engine's validation), `Price{0}` can never collide with a real best price. The publisher simply ignores accepts with `price == Price{0}` when updating its top-of-book state, because a market order either fills immediately (generating trades that update top-of-book) or has no effect on the book.
+
+**Complexity:**
+All changes are O(1) — they add constant-size fields to structs and populate them from values already available in the engine at the point of event emission. No new data structures, no lookups, no allocations.
+
+**Benefits:**
+1. Any `EventSink` consumer can now derive top-of-book state changes from the event stream alone — no coupling to `OrderBook` internals.
+2. The wire format (Phase 6) can carry `SymbolId` from day one, avoiding a breaking protocol change when multi-symbol support arrives.
+3. The `resting_order_removed` flag enables the publisher's `count`-based draining logic without maintaining full book depth.
+
+**Drawbacks / tradeoffs accepted:**
+1. This is a `core/` schema change with ripple effects — every existing consumer that constructs `Trade`, `OrderAccepted`, or `OrderCancelled` must be updated (task 2). With `-Werror` and `-Wmissing-field-initializers`, the compiler catches all of these, but it's still a multi-file migration.
+2. `resting_order_removed` is engine-internal state exposed on a `core/` type. It's not on the wire `TradeMessage` (subscribers don't need it — they only see the resulting `TopOfBookMessage` change), but it does appear in `EngineResponse.trades`, which means any code iterating over trades now sees this field. Minimal cost in practice — it's a `bool`, and consumers that don't care simply ignore it.
+3. `SymbolId` is `uint32_t`-based (4 bytes) while `OrderId` is `uint64_t`-based (8 bytes). This is intentional — symbol IDs are a small, controlled namespace (tens to thousands of instruments on a real exchange), while order IDs are a potentially huge namespace (millions per day). The size difference keeps message structs compact.
+
+**Alternatives considered and rejected:**
+1. **Give the publisher direct `const OrderBook&` access** — would solve the information gap without enriching events, but undermines the `EventSink` abstraction and makes R3's book-builder test meaningless (the publisher could just query the book instead of deriving state from events).
+2. **Add `std::optional<Price> new_best_after` to `OrderCancelled`/`Trade`** — so the engine tells the publisher what's behind a drained level. Rejected because this is book-structure knowledge (what's at the *next* price level), which is a fundamentally different and larger form of coupling than "what happened to *this* order." The publisher deliberately accepts "no known best" as a valid transient state, corrected by the next snapshot.
+3. **Track quantity only (no separate order count)** — tempting since `qty` is what gets published. But `qty == 0` doesn't reliably detect drainage: a partial fill reduces `qty` without removing the order. `count == 0` is the precise answer to "is this level empty?" — it's the minimum extra state that makes draining detectable without full depth.
+
+**How this connects to what came before:**
+- `EventSink` (Phase 1, Task 5) is the output port these enriched events flow through. The interface itself (`on_trade`, `on_order_accepted`, `on_order_cancelled`) is unchanged — only the payloads carry more data.
+- `Trade` (Phase 1, Task 4) already carried `TradeSequence` for future market-data gap detection; now it also carries `resting_order_removed` for the publisher's count-tracking logic.
+- The matching loop in `engine/matching_engine.cpp` (Phase 1, Tasks 9–12) is where `resting_order_removed` is computed — the same code path that decides `if (resting->quantity == Quantity{0}) { book_.remove_order(resting); }` now also records that decision in the Trade struct.
+
+**Check your understanding:**
+1. Why can't the publisher determine `resting_order_removed` from `Trade.quantity` alone? (Hint: think about what a trade with `quantity = 50` means when you don't know how much the resting order had remaining before this fill.)
+2. If we added `Price` to `OrderCancelled` but forgot `Side`, could the publisher still function? What would it have to do differently, and what edge case would break? (Hint: what if bid and ask have the same best price — can it happen, and if so, how does the publisher know which side to decrement?)
+
+### Task 2 — Migrating Existing Event/Trade Consumers
+
+**What it does:**
+Updates every test file that manually constructs `Trade`, `OrderAccepted`, or `OrderCancelled` to include the new fields added in Task 1 (`resting_order_removed`, `price`, `side`). This is the "ripple effect" of a `core/` schema change.
+
+**Exact locations:**
+- `tests/core_trade_test.cpp` — Trade constructions gained `resting_order_removed` (bool)
+- `tests/test_events.cpp` — Trade, OrderAccepted, OrderCancelled constructions all updated
+- `tests/test_interfaces.cpp` — same (NullEventSink and RecordingEventSink test code)
+- `tests/inbound_queue_test.cpp` — Trade construction in queue payload test
+
+**Why this matters:**
+With `-Werror` and `-Wmissing-field-initializers`, the compiler turns every omitted field into a hard error. This is deliberate — it means a schema change can't silently zero-initialize a new field without the developer explicitly choosing that value. The migration is mechanical (add the field to every aggregate initialization) but the compiler ensures no site is missed.
+
+**What consumers did NOT need changes:**
+- `NullEventSink` — its overrides take `const&` params and ignore them; no construction
+- `adapters/text_protocol/text_protocol_renderer.cpp` — reads `trade.price` and `trade.quantity` from `EngineResponse.trades`; never constructs a `Trade`
+- `tests/matching_engine_test.cpp`, `tests/edge_case_test.cpp`, `tests/integration_test.cpp`, `tests/pool_exhaustion_test.cpp` — all use `RecordingEventSink` which just stores what the engine emits (already correct after Task 1)
+
+**Check your understanding:**
+Why does `-Wmissing-field-initializers` catch these but `-Wuninitialized` wouldn't? (Hint: aggregate initialization zero-fills trailing fields by default in C++ — the struct is fully initialized, just not to a meaningful value.)
+
+---
+
+### Tasks 3–6 — Wire Format, TopOfBook, Layout Tests, CMake
+
+**What they do:**
+Establish the UDP feed's data layer: fixed-size, trivially-copyable message structs that can be `memcpy`'d directly on/off the wire without any serialization framework.
+
+**Exact locations:**
+- `adapters/udp/FeedMessage.hpp` — `MessageType` enum, `FeedHeader`, `TopOfBookMessage`, `TradeMessage`, `SnapshotMessage`
+- `adapters/udp/TopOfBook.hpp` — `TopOfBook` struct (feed-local, not in `core/`)
+- `tests/udp_feed_message_test.cpp` — layout stability, trivially_copyable, SymbolId hash
+- `CMakeLists.txt` — `adapters_udp` library target + test targets
+
+**Why fixed-size POD structs instead of a serialization framework:**
+Phase 7 will introduce a variable-length binary protocol and benchmark it against this baseline. Having an explicit, no-abstraction "just memcpy the struct" approach here gives Phase 7 a concrete thing to improve upon — and demonstrates understanding of why real market-data feeds use fixed-layout formats (predictable decode cost, no allocation on the receive path, cache-line-friendly).
+
+**The padding story:**
+`FeedHeader` has `_pad[7]` (not `_pad[3]` as the original design.md sketched) because `uint64_t sequence` needs 8-byte alignment. With `type(1) + _pad[7] = 8`, the next field starts at offset 8 naturally — no implicit compiler padding. Total: 24 bytes, fully explicit. The test catches this: if someone reorders fields or changes pad size, `sizeof(FeedHeader) != 24` fails immediately.
+
+**Why `TopOfBook` lives in `adapters/udp/` not `core/`:**
+It's the book-builder's output surface — the thing a subscriber queries after receiving feed messages. The engine never produces or consumes it. Putting it in `core/` would violate `core/`'s rule of "domain primitives only, no logic, no adapter-specific concepts."
+
+**Check your understanding:**
+What happens if you add a `uint32_t order_count` field to `TopOfBookMessage` between `symbol` and `bid_price`? Would the size change, and would the `static_assert` catch it at compile time or would you need the runtime size test?
+
+---
+
+### Tasks 7–13 — UdpFeedPublisher (Complete Implementation)
+
+**What it does:**
+`UdpFeedPublisher` implements `EventSink` and publishes top-of-book updates + trade prints over UDP. It's the first real consumer of the `EventSink` port — the whole reason that port exists as a separate channel from `EngineResponse`.
+
+**Exact locations:**
+- `adapters/udp/udp_feed_publisher.hpp` — class definition, `SideState` struct, `SendFunction` typedef
+- `adapters/udp/udp_feed_publisher.cpp` — full implementation of on_trade/on_order_accepted/on_order_cancelled + send path + snapshot logic
+- `tests/udp_publisher_test.cpp` — 15 unit tests
+- `tests/udp_publisher_e2e_test.cpp` — 3 integration tests against real MatchingEngine
+
+**The `qty` vs `count` distinction (§1b):**
+The publisher tracks two things per side at its best price:
+- `qty` — aggregate resting quantity (what gets published in the `TopOfBookMessage`)
+- `count` — number of distinct orders (internal-only, never on the wire)
+
+`count` reaching zero is what triggers zeroing a side — not `qty` reaching zero. This matters because a partial fill reduces `qty` without the order being removed (`count` unchanged). Only a full fill (`resting_order_removed == true`) or a cancel decrements `count`.
+
+**The crossing-detection guard:**
+`on_order_accepted` is called BEFORE matching (Phase 1 design decision: "accepted" means "the engine took ownership," not "resting"). An aggressive buy at the best ask price would incorrectly update the bid state if we didn't guard against it. The fix: if a buy's price >= current best ask (or a sell's price <= current best bid), skip the update — the order will match immediately and the trade callbacks will handle the state change.
+
+**Non-blocking send with drop-on-EWOULDBLOCK:**
+`sendto()` with `MSG_DONTWAIT` — if the OS send buffer is full, the message is silently dropped for that subscriber. This is the correct semantic for a UDP market-data feed: reliability comes from gap detection + periodic snapshots, not from blocking the matching engine's hot path. Contrast with Phase 5's TCP gateway, which spin-retries on a full outbound queue (R8) because TCP promises delivery.
+
+**Injectable `SendFunction`:**
+The publisher takes an optional `SendFunction` — in production it wraps real `sendto()`, in tests it's a lambda that captures sent bytes into a vector. This keeps the publisher testable on any platform without real sockets.
+
+**Message-count snapshot:**
+Every N messages (configurable, default 500), the publisher emits a `SnapshotMessage` reflecting current state. This is purely counter-driven (no timer thread, no clock dependency), consistent with the publisher being purely event-driven.
+
+**Check your understanding:**
+1. Why does the publisher track `count` rather than just checking `qty == 0` to detect drainage? Give a concrete example where they'd disagree.
+2. If `on_order_accepted` didn't have the crossing guard, what specific sequence of events would produce an incorrect `TopOfBookMessage`? Walk through: resting sell at 101, aggressive buy at 101, what the publisher would incorrectly publish.
+
+---
+
+### Tasks 15–19 — UdpFeedBookBuilder (Subscriber-Side Reconstruction)
+
+**What it does:**
+`UdpFeedBookBuilder` receives raw wire bytes (the same messages `UdpFeedPublisher` sends) and reconstructs a local top-of-book view — proving the feed carries enough information to be useful without any access to the engine.
+
+**Exact locations:**
+- `adapters/udp/book_builder.hpp` — class definition, `GapLogger` typedef, `PerSymbolState`
+- `adapters/udp/book_builder.cpp` — dispatch, anchoring, incremental application, gap detection
+- `tests/udp_book_builder_test.cpp` — 12 unit tests
+
+**No `engine/` includes — enforced structurally:**
+`book_builder.hpp` includes only `adapters/udp/FeedMessage.hpp`, `adapters/udp/TopOfBook.hpp`, and `core/Types.hpp`. It literally cannot reference `MatchingEngine` or `OrderBook` — the dependency graph prevents it. This is what makes the Definition of Done test (task 20) honest: the BookBuilder proves the *feed itself* is sufficient.
+
+**The three states:**
+- **Uninitialized** — no snapshot received yet. All incrementals are discarded (pre-anchor noise).
+- **Anchored** — a `SnapshotMessage` established the baseline. Incrementals are applied.
+- **Stale** — a gap was detected (non-contiguous sequence). The local state *may* be wrong. Cleared only by the next snapshot.
+
+**Why trades don't update the book:**
+The publisher sends a `TradeMessage` (for trade-print consumers) AND a `TopOfBookMessage` (reflecting the post-trade top-of-book) as separate messages. The BookBuilder's state is updated by `TopOfBookMessage`, not by trying to reconstruct what the trade implies. This keeps reconstruction trivial — just "apply the latest state the publisher tells you" — rather than forcing the BookBuilder to replicate the publisher's qty/count logic.
+
+**Injectable `GapLogger`:**
+Same pattern as `EventSink` itself — a `std::function` injected via constructor, defaulting to `fprintf(stderr, ...)`. Tests inject a capturing lambda and assert on the exact expected/received sequence values, without parsing stderr.
+
+**Check your understanding:**
+1. Why is "stale" different from "uninitialized"? A stale BookBuilder has *some* state (possibly wrong); an uninitialized one has none. What would go wrong if you treated them the same (i.e., continued applying incrementals after a gap)?
+2. Why does staleness clear on snapshot but not on "sequence resuming correctly"? (Hint: if you missed message 15, and then 16 arrives correctly, you still don't know what 15 said.)
+
+---
+
+### Tasks 20–21 — Definition of Done (End-to-End Pipeline)
+
+**What they do:**
+The two acceptance criteria that prove Phase 6 works as a whole:
+1. **DoD #1**: BookBuilder's reconstructed top-of-book matches the engine's actual `OrderBook` state after a scripted sequence including drain-and-recover cycles.
+2. **DoD #2**: Under artificial packet loss (the test drops chosen messages before delivery), `is_stale()` becomes true and clears only after the next snapshot.
+
+**Exact locations:**
+- `tests/udp_e2e_dod_test.cpp` — 4 tests covering both DoD criteria plus baselines
+
+**Why the test queries `engine.book()` directly:**
+The test — and *only* the test — has access to both the engine's `OrderBook` and the BookBuilder's reconstructed state. It compares them to verify correctness. The BookBuilder itself never gets this access (enforced by header inclusion). This is the honest acceptance test: "can a subscriber, using nothing but wire messages, arrive at the same answer as someone who can peek at the engine's internals?"
+
+**Check your understanding:**
+If the publisher has a bug that causes it to publish an incorrect `TopOfBookMessage` (e.g., off-by-one in qty), would the DoD #1 test catch it? Why or why not? (Hint: what does the test compare against — the publisher's view or the engine's actual book?)
+
+---
+
+### Task 22 — Production Wiring (exchange_server)
+
+**What it does:**
+Updates `apps/exchange_server/main.cpp` to instantiate a real `UdpFeedPublisher` in place of `NullEventSink`. This is the production composition root — the place where all the pieces come together.
+
+**Exact locations:**
+- `apps/exchange_server/main.cpp:87–110` — UDP socket creation, subscriber setup, publisher construction, engine wiring
+- `apps/exchange_server/main.cpp:230` — `::close(udp_fd)` in shutdown path
+
+**How this differs from the test wiring:**
+- Test (task 14): publisher captures bytes via a lambda — no real socket, no real subscriber
+- Production: publisher sends to a real UDP socket with `MSG_DONTWAIT`, targeting `localhost:9001` (configurable via `MINIEXCHANGE_UDP_FEED_PORT` env var)
+
+**Why the subscriber list is hardcoded:**
+Phase 6 uses simulated unicast fan-out to a static list (design.md §4, §6). Real multicast would require network infrastructure support. A single localhost subscriber is sufficient to demonstrate the mechanism and allow a local `BookBuilder` process to receive the feed.
+
+**Check your understanding:**
+The exchange_server has two threads: I/O (epoll) and Engine (main). The `UdpFeedPublisher::on_trade` call happens on the Engine thread (inside `engine.submit()`). Why doesn't the non-blocking `sendto()` need a mutex here? (Hint: who else could be calling the publisher concurrently?)
+
+---
+
+### Phase 6 Summary
+
+Phase 6 makes the `EventSink` port earn its place in the architecture. Introduced in Phase 1 as a no-op (`NullEventSink`), it now carries real value: a UDP market-data feed that publishes top-of-book updates and trade prints, plus a subscriber-side book-builder that proves the feed is self-sufficient.
+
+Key design decisions and their costs:
+- **Top-of-book only (not full depth)**: simpler, but creates a brief "no known best" gap when a level drains. Corrected by periodic snapshots.
+- **`qty` + `count` tracking**: the minimum internal state needed to detect drainage without full depth. `Trade.resting_order_removed` closes the "partial vs. full fill" ambiguity.
+- **Crossing guard in `on_order_accepted`**: prevents the publisher from incorrectly updating its best price for orders that will match immediately and never rest.
+- **Drop-on-EWOULDBLOCK**: the right policy for UDP feeds — reliability comes from snapshots and gap detection, not from blocking the hot path.
+- **Message-count snapshots**: no timer thread, no clock dependency; the publisher is purely event-driven.
+- **`GapLogger` injection**: same testability pattern as `EventSink` itself — dependency injection for anything that does I/O.
+
+The `EventSink` interface (`on_trade`, `on_order_accepted`, `on_order_cancelled`) was unchanged from Phase 1 — only the payloads were enriched. The engine doesn't know (or care) that a UDP feed exists; it just calls its `EventSink*` as always.

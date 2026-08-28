@@ -644,6 +644,246 @@ build libtext_protocol.a: CXX_STATIC_LIBRARY_LINKER__text_protocol_RelWithDebInf
   TARGET_SUPPORT_DIR = CMakeFiles\text_protocol.dir
 
 # =============================================================================
+# Object build statements for STATIC_LIBRARY target adapters_udp
+
+
+#############################################
+# Order-only phony target for adapters_udp
+
+build cmake_object_order_depends_target_adapters_udp: phony || .
+
+build CMakeFiles/adapters_udp.dir/adapters/udp/udp_feed_publisher.cpp.obj: CXX_COMPILER__adapters_udp_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/adapters/udp/udp_feed_publisher.cpp || cmake_object_order_depends_target_adapters_udp
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\adapters_udp.dir\adapters\udp\udp_feed_publisher.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange
+  OBJECT_DIR = CMakeFiles\adapters_udp.dir
+  OBJECT_FILE_DIR = CMakeFiles\adapters_udp.dir\adapters\udp
+  TARGET_SUPPORT_DIR = CMakeFiles\adapters_udp.dir
+
+build CMakeFiles/adapters_udp.dir/adapters/udp/book_builder.cpp.obj: CXX_COMPILER__adapters_udp_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/adapters/udp/book_builder.cpp || cmake_object_order_depends_target_adapters_udp
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\adapters_udp.dir\adapters\udp\book_builder.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange
+  OBJECT_DIR = CMakeFiles\adapters_udp.dir
+  OBJECT_FILE_DIR = CMakeFiles\adapters_udp.dir\adapters\udp
+  TARGET_SUPPORT_DIR = CMakeFiles\adapters_udp.dir
+
+
+# =============================================================================
+# Link build statements for STATIC_LIBRARY target adapters_udp
+
+
+#############################################
+# Link the static library libadapters_udp.a
+
+build libadapters_udp.a: CXX_STATIC_LIBRARY_LINKER__adapters_udp_RelWithDebInfo CMakeFiles/adapters_udp.dir/adapters/udp/udp_feed_publisher.cpp.obj CMakeFiles/adapters_udp.dir/adapters/udp/book_builder.cpp.obj
+  CONFIG = RelWithDebInfo
+  LANGUAGE_COMPILE_FLAGS = -O2 -g -DNDEBUG
+  OBJECT_DIR = CMakeFiles\adapters_udp.dir
+  POST_BUILD = cd .
+  PRE_LINK = cd .
+  TARGET_FILE = libadapters_udp.a
+  TARGET_PDB = adapters_udp.a.dbg
+  TARGET_SUPPORT_DIR = CMakeFiles\adapters_udp.dir
+
+# =============================================================================
+# Object build statements for EXECUTABLE target udp_feed_message_test
+
+
+#############################################
+# Order-only phony target for udp_feed_message_test
+
+build cmake_object_order_depends_target_udp_feed_message_test: phony || cmake_object_order_depends_target_adapters_udp cmake_object_order_depends_target_gtest cmake_object_order_depends_target_gtest_main
+
+build CMakeFiles/udp_feed_message_test.dir/tests/udp_feed_message_test.cpp.obj: CXX_COMPILER__udp_feed_message_test_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/tests/udp_feed_message_test.cpp || cmake_object_order_depends_target_udp_feed_message_test
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\udp_feed_message_test.dir\tests\udp_feed_message_test.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest/include -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest
+  OBJECT_DIR = CMakeFiles\udp_feed_message_test.dir
+  OBJECT_FILE_DIR = CMakeFiles\udp_feed_message_test.dir\tests
+  TARGET_SUPPORT_DIR = CMakeFiles\udp_feed_message_test.dir
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target udp_feed_message_test
+
+
+#############################################
+# Link the executable udp_feed_message_test.exe
+
+build udp_feed_message_test.exe udp_feed_message_test_e3b0c442_tests.cmake | ${cmake_ninja_workdir}udp_feed_message_test_e3b0c442_tests.cmake: CXX_EXECUTABLE_LINKER__udp_feed_message_test_RelWithDebInfo CMakeFiles/udp_feed_message_test.dir/tests/udp_feed_message_test.cpp.obj | lib/libgtest_main.a libadapters_udp.a lib/libgtest.a || lib/libgtest.a lib/libgtest_main.a libadapters_udp.a
+  CONFIG = RelWithDebInfo
+  FLAGS = -O2 -g -DNDEBUG
+  LINK_LIBRARIES = lib/libgtest_main.a  libadapters_udp.a  lib/libgtest.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
+  OBJECT_DIR = CMakeFiles\udp_feed_message_test.dir
+  POST_BUILD = C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\harsh\Desktop\MiniExchange\build_check && "C:\Program Files\CMake\bin\cmake.exe" -P C:/Users/harsh/Desktop/MiniExchange/build_check/udp_feed_message_test_e3b0c442_discovery.cmake -- "
+  PRE_LINK = cd .
+  RESTAT = 1
+  TARGET_FILE = udp_feed_message_test.exe
+  TARGET_IMPLIB = libudp_feed_message_test.dll.a
+  TARGET_PDB = udp_feed_message_test.exe.dbg
+  TARGET_SUPPORT_DIR = CMakeFiles\udp_feed_message_test.dir
+
+# =============================================================================
+# Object build statements for EXECUTABLE target udp_publisher_test
+
+
+#############################################
+# Order-only phony target for udp_publisher_test
+
+build cmake_object_order_depends_target_udp_publisher_test: phony || cmake_object_order_depends_target_adapters_udp cmake_object_order_depends_target_gtest cmake_object_order_depends_target_gtest_main
+
+build CMakeFiles/udp_publisher_test.dir/tests/udp_publisher_test.cpp.obj: CXX_COMPILER__udp_publisher_test_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/tests/udp_publisher_test.cpp || cmake_object_order_depends_target_udp_publisher_test
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\udp_publisher_test.dir\tests\udp_publisher_test.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest/include -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest
+  OBJECT_DIR = CMakeFiles\udp_publisher_test.dir
+  OBJECT_FILE_DIR = CMakeFiles\udp_publisher_test.dir\tests
+  TARGET_SUPPORT_DIR = CMakeFiles\udp_publisher_test.dir
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target udp_publisher_test
+
+
+#############################################
+# Link the executable udp_publisher_test.exe
+
+build udp_publisher_test.exe udp_publisher_test_e3b0c442_tests.cmake | ${cmake_ninja_workdir}udp_publisher_test_e3b0c442_tests.cmake: CXX_EXECUTABLE_LINKER__udp_publisher_test_RelWithDebInfo CMakeFiles/udp_publisher_test.dir/tests/udp_publisher_test.cpp.obj | lib/libgtest_main.a libadapters_udp.a lib/libgtest.a || lib/libgtest.a lib/libgtest_main.a libadapters_udp.a
+  CONFIG = RelWithDebInfo
+  FLAGS = -O2 -g -DNDEBUG
+  LINK_LIBRARIES = lib/libgtest_main.a  libadapters_udp.a  lib/libgtest.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
+  OBJECT_DIR = CMakeFiles\udp_publisher_test.dir
+  POST_BUILD = C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\harsh\Desktop\MiniExchange\build_check && "C:\Program Files\CMake\bin\cmake.exe" -P C:/Users/harsh/Desktop/MiniExchange/build_check/udp_publisher_test_e3b0c442_discovery.cmake -- "
+  PRE_LINK = cd .
+  RESTAT = 1
+  TARGET_FILE = udp_publisher_test.exe
+  TARGET_IMPLIB = libudp_publisher_test.dll.a
+  TARGET_PDB = udp_publisher_test.exe.dbg
+  TARGET_SUPPORT_DIR = CMakeFiles\udp_publisher_test.dir
+
+# =============================================================================
+# Object build statements for EXECUTABLE target udp_publisher_e2e_test
+
+
+#############################################
+# Order-only phony target for udp_publisher_e2e_test
+
+build cmake_object_order_depends_target_udp_publisher_e2e_test: phony || cmake_object_order_depends_target_adapters_udp cmake_object_order_depends_target_engine cmake_object_order_depends_target_gtest cmake_object_order_depends_target_gtest_main cmake_object_order_depends_target_orderbook
+
+build CMakeFiles/udp_publisher_e2e_test.dir/tests/udp_publisher_e2e_test.cpp.obj: CXX_COMPILER__udp_publisher_e2e_test_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/tests/udp_publisher_e2e_test.cpp || cmake_object_order_depends_target_udp_publisher_e2e_test
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\udp_publisher_e2e_test.dir\tests\udp_publisher_e2e_test.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest/include -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest
+  OBJECT_DIR = CMakeFiles\udp_publisher_e2e_test.dir
+  OBJECT_FILE_DIR = CMakeFiles\udp_publisher_e2e_test.dir\tests
+  TARGET_SUPPORT_DIR = CMakeFiles\udp_publisher_e2e_test.dir
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target udp_publisher_e2e_test
+
+
+#############################################
+# Link the executable udp_publisher_e2e_test.exe
+
+build udp_publisher_e2e_test.exe udp_publisher_e2e_test_e3b0c442_tests.cmake | ${cmake_ninja_workdir}udp_publisher_e2e_test_e3b0c442_tests.cmake: CXX_EXECUTABLE_LINKER__udp_publisher_e2e_test_RelWithDebInfo CMakeFiles/udp_publisher_e2e_test.dir/tests/udp_publisher_e2e_test.cpp.obj | lib/libgtest_main.a libengine.a libadapters_udp.a lib/libgtest.a liborderbook.a || lib/libgtest.a lib/libgtest_main.a libadapters_udp.a libengine.a liborderbook.a
+  CONFIG = RelWithDebInfo
+  FLAGS = -O2 -g -DNDEBUG
+  LINK_LIBRARIES = lib/libgtest_main.a  libengine.a  libadapters_udp.a  lib/libgtest.a  liborderbook.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
+  OBJECT_DIR = CMakeFiles\udp_publisher_e2e_test.dir
+  POST_BUILD = C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\harsh\Desktop\MiniExchange\build_check && "C:\Program Files\CMake\bin\cmake.exe" -P C:/Users/harsh/Desktop/MiniExchange/build_check/udp_publisher_e2e_test_e3b0c442_discovery.cmake -- "
+  PRE_LINK = cd .
+  RESTAT = 1
+  TARGET_FILE = udp_publisher_e2e_test.exe
+  TARGET_IMPLIB = libudp_publisher_e2e_test.dll.a
+  TARGET_PDB = udp_publisher_e2e_test.exe.dbg
+  TARGET_SUPPORT_DIR = CMakeFiles\udp_publisher_e2e_test.dir
+
+# =============================================================================
+# Object build statements for EXECUTABLE target udp_book_builder_test
+
+
+#############################################
+# Order-only phony target for udp_book_builder_test
+
+build cmake_object_order_depends_target_udp_book_builder_test: phony || cmake_object_order_depends_target_adapters_udp cmake_object_order_depends_target_gtest cmake_object_order_depends_target_gtest_main
+
+build CMakeFiles/udp_book_builder_test.dir/tests/udp_book_builder_test.cpp.obj: CXX_COMPILER__udp_book_builder_test_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/tests/udp_book_builder_test.cpp || cmake_object_order_depends_target_udp_book_builder_test
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\udp_book_builder_test.dir\tests\udp_book_builder_test.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest/include -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest
+  OBJECT_DIR = CMakeFiles\udp_book_builder_test.dir
+  OBJECT_FILE_DIR = CMakeFiles\udp_book_builder_test.dir\tests
+  TARGET_SUPPORT_DIR = CMakeFiles\udp_book_builder_test.dir
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target udp_book_builder_test
+
+
+#############################################
+# Link the executable udp_book_builder_test.exe
+
+build udp_book_builder_test.exe udp_book_builder_test_e3b0c442_tests.cmake | ${cmake_ninja_workdir}udp_book_builder_test_e3b0c442_tests.cmake: CXX_EXECUTABLE_LINKER__udp_book_builder_test_RelWithDebInfo CMakeFiles/udp_book_builder_test.dir/tests/udp_book_builder_test.cpp.obj | lib/libgtest_main.a libadapters_udp.a lib/libgtest.a || lib/libgtest.a lib/libgtest_main.a libadapters_udp.a
+  CONFIG = RelWithDebInfo
+  FLAGS = -O2 -g -DNDEBUG
+  LINK_LIBRARIES = lib/libgtest_main.a  libadapters_udp.a  lib/libgtest.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
+  OBJECT_DIR = CMakeFiles\udp_book_builder_test.dir
+  POST_BUILD = C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\harsh\Desktop\MiniExchange\build_check && "C:\Program Files\CMake\bin\cmake.exe" -P C:/Users/harsh/Desktop/MiniExchange/build_check/udp_book_builder_test_e3b0c442_discovery.cmake -- "
+  PRE_LINK = cd .
+  RESTAT = 1
+  TARGET_FILE = udp_book_builder_test.exe
+  TARGET_IMPLIB = libudp_book_builder_test.dll.a
+  TARGET_PDB = udp_book_builder_test.exe.dbg
+  TARGET_SUPPORT_DIR = CMakeFiles\udp_book_builder_test.dir
+
+# =============================================================================
+# Object build statements for EXECUTABLE target udp_e2e_dod_test
+
+
+#############################################
+# Order-only phony target for udp_e2e_dod_test
+
+build cmake_object_order_depends_target_udp_e2e_dod_test: phony || cmake_object_order_depends_target_adapters_udp cmake_object_order_depends_target_engine cmake_object_order_depends_target_gtest cmake_object_order_depends_target_gtest_main cmake_object_order_depends_target_orderbook
+
+build CMakeFiles/udp_e2e_dod_test.dir/tests/udp_e2e_dod_test.cpp.obj: CXX_COMPILER__udp_e2e_dod_test_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/tests/udp_e2e_dod_test.cpp || cmake_object_order_depends_target_udp_e2e_dod_test
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\udp_e2e_dod_test.dir\tests\udp_e2e_dod_test.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest/include -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest
+  OBJECT_DIR = CMakeFiles\udp_e2e_dod_test.dir
+  OBJECT_FILE_DIR = CMakeFiles\udp_e2e_dod_test.dir\tests
+  TARGET_SUPPORT_DIR = CMakeFiles\udp_e2e_dod_test.dir
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target udp_e2e_dod_test
+
+
+#############################################
+# Link the executable udp_e2e_dod_test.exe
+
+build udp_e2e_dod_test.exe udp_e2e_dod_test_e3b0c442_tests.cmake | ${cmake_ninja_workdir}udp_e2e_dod_test_e3b0c442_tests.cmake: CXX_EXECUTABLE_LINKER__udp_e2e_dod_test_RelWithDebInfo CMakeFiles/udp_e2e_dod_test.dir/tests/udp_e2e_dod_test.cpp.obj | lib/libgtest_main.a libengine.a libadapters_udp.a lib/libgtest.a liborderbook.a || lib/libgtest.a lib/libgtest_main.a libadapters_udp.a libengine.a liborderbook.a
+  CONFIG = RelWithDebInfo
+  FLAGS = -O2 -g -DNDEBUG
+  LINK_LIBRARIES = lib/libgtest_main.a  libengine.a  libadapters_udp.a  lib/libgtest.a  liborderbook.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
+  OBJECT_DIR = CMakeFiles\udp_e2e_dod_test.dir
+  POST_BUILD = C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\harsh\Desktop\MiniExchange\build_check && "C:\Program Files\CMake\bin\cmake.exe" -P C:/Users/harsh/Desktop/MiniExchange/build_check/udp_e2e_dod_test_e3b0c442_discovery.cmake -- "
+  PRE_LINK = cd .
+  RESTAT = 1
+  TARGET_FILE = udp_e2e_dod_test.exe
+  TARGET_IMPLIB = libudp_e2e_dod_test.dll.a
+  TARGET_PDB = udp_e2e_dod_test.exe.dbg
+  TARGET_SUPPORT_DIR = CMakeFiles\udp_e2e_dod_test.dir
+
+# =============================================================================
 # Object build statements for STATIC_LIBRARY target workload_generator
 
 
@@ -938,6 +1178,123 @@ build spsc_stress_test.exe spsc_stress_test_e3b0c442_tests.cmake | ${cmake_ninja
   TARGET_IMPLIB = libspsc_stress_test.dll.a
   TARGET_PDB = spsc_stress_test.exe.dbg
   TARGET_SUPPORT_DIR = CMakeFiles\spsc_stress_test.dir
+
+# =============================================================================
+# Object build statements for EXECUTABLE target inbound_queue_test
+
+
+#############################################
+# Order-only phony target for inbound_queue_test
+
+build cmake_object_order_depends_target_inbound_queue_test: phony || cmake_object_order_depends_target_gtest cmake_object_order_depends_target_gtest_main cmake_object_order_depends_target_text_protocol
+
+build CMakeFiles/inbound_queue_test.dir/tests/inbound_queue_test.cpp.obj: CXX_COMPILER__inbound_queue_test_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/tests/inbound_queue_test.cpp || cmake_object_order_depends_target_inbound_queue_test
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\inbound_queue_test.dir\tests\inbound_queue_test.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest/include -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest
+  OBJECT_DIR = CMakeFiles\inbound_queue_test.dir
+  OBJECT_FILE_DIR = CMakeFiles\inbound_queue_test.dir\tests
+  TARGET_SUPPORT_DIR = CMakeFiles\inbound_queue_test.dir
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target inbound_queue_test
+
+
+#############################################
+# Link the executable inbound_queue_test.exe
+
+build inbound_queue_test.exe inbound_queue_test_e3b0c442_tests.cmake | ${cmake_ninja_workdir}inbound_queue_test_e3b0c442_tests.cmake: CXX_EXECUTABLE_LINKER__inbound_queue_test_RelWithDebInfo CMakeFiles/inbound_queue_test.dir/tests/inbound_queue_test.cpp.obj | lib/libgtest_main.a libtext_protocol.a lib/libgtest.a || lib/libgtest.a lib/libgtest_main.a libtext_protocol.a
+  CONFIG = RelWithDebInfo
+  FLAGS = -O2 -g -DNDEBUG
+  LINK_LIBRARIES = lib/libgtest_main.a  libtext_protocol.a  lib/libgtest.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
+  OBJECT_DIR = CMakeFiles\inbound_queue_test.dir
+  POST_BUILD = C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\harsh\Desktop\MiniExchange\build_check && "C:\Program Files\CMake\bin\cmake.exe" -P C:/Users/harsh/Desktop/MiniExchange/build_check/inbound_queue_test_e3b0c442_discovery.cmake -- "
+  PRE_LINK = cd .
+  RESTAT = 1
+  TARGET_FILE = inbound_queue_test.exe
+  TARGET_IMPLIB = libinbound_queue_test.dll.a
+  TARGET_PDB = inbound_queue_test.exe.dbg
+  TARGET_SUPPORT_DIR = CMakeFiles\inbound_queue_test.dir
+
+# =============================================================================
+# Object build statements for EXECUTABLE target response_routing_test
+
+
+#############################################
+# Order-only phony target for response_routing_test
+
+build cmake_object_order_depends_target_response_routing_test: phony || cmake_object_order_depends_target_engine cmake_object_order_depends_target_gtest cmake_object_order_depends_target_gtest_main cmake_object_order_depends_target_orderbook cmake_object_order_depends_target_text_protocol
+
+build CMakeFiles/response_routing_test.dir/tests/response_routing_test.cpp.obj: CXX_COMPILER__response_routing_test_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/tests/response_routing_test.cpp || cmake_object_order_depends_target_response_routing_test
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\response_routing_test.dir\tests\response_routing_test.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest/include -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest
+  OBJECT_DIR = CMakeFiles\response_routing_test.dir
+  OBJECT_FILE_DIR = CMakeFiles\response_routing_test.dir\tests
+  TARGET_SUPPORT_DIR = CMakeFiles\response_routing_test.dir
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target response_routing_test
+
+
+#############################################
+# Link the executable response_routing_test.exe
+
+build response_routing_test.exe response_routing_test_e3b0c442_tests.cmake | ${cmake_ninja_workdir}response_routing_test_e3b0c442_tests.cmake: CXX_EXECUTABLE_LINKER__response_routing_test_RelWithDebInfo CMakeFiles/response_routing_test.dir/tests/response_routing_test.cpp.obj | lib/libgtest_main.a libengine.a libtext_protocol.a lib/libgtest.a liborderbook.a || lib/libgtest.a lib/libgtest_main.a libengine.a liborderbook.a libtext_protocol.a
+  CONFIG = RelWithDebInfo
+  FLAGS = -O2 -g -DNDEBUG
+  LINK_LIBRARIES = lib/libgtest_main.a  libengine.a  libtext_protocol.a  lib/libgtest.a  liborderbook.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
+  OBJECT_DIR = CMakeFiles\response_routing_test.dir
+  POST_BUILD = C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\harsh\Desktop\MiniExchange\build_check && "C:\Program Files\CMake\bin\cmake.exe" -P C:/Users/harsh/Desktop/MiniExchange/build_check/response_routing_test_e3b0c442_discovery.cmake -- "
+  PRE_LINK = cd .
+  RESTAT = 1
+  TARGET_FILE = response_routing_test.exe
+  TARGET_IMPLIB = libresponse_routing_test.dll.a
+  TARGET_PDB = response_routing_test.exe.dbg
+  TARGET_SUPPORT_DIR = CMakeFiles\response_routing_test.dir
+
+# =============================================================================
+# Object build statements for EXECUTABLE target r8_spin_test
+
+
+#############################################
+# Order-only phony target for r8_spin_test
+
+build cmake_object_order_depends_target_r8_spin_test: phony || cmake_object_order_depends_target_gtest cmake_object_order_depends_target_gtest_main
+
+build CMakeFiles/r8_spin_test.dir/tests/r8_spin_test.cpp.obj: CXX_COMPILER__r8_spin_test_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/tests/r8_spin_test.cpp || cmake_object_order_depends_target_r8_spin_test
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\r8_spin_test.dir\tests\r8_spin_test.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest/include -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest
+  OBJECT_DIR = CMakeFiles\r8_spin_test.dir
+  OBJECT_FILE_DIR = CMakeFiles\r8_spin_test.dir\tests
+  TARGET_SUPPORT_DIR = CMakeFiles\r8_spin_test.dir
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target r8_spin_test
+
+
+#############################################
+# Link the executable r8_spin_test.exe
+
+build r8_spin_test.exe r8_spin_test_e3b0c442_tests.cmake | ${cmake_ninja_workdir}r8_spin_test_e3b0c442_tests.cmake: CXX_EXECUTABLE_LINKER__r8_spin_test_RelWithDebInfo CMakeFiles/r8_spin_test.dir/tests/r8_spin_test.cpp.obj | lib/libgtest_main.a lib/libgtest.a || lib/libgtest.a lib/libgtest_main.a
+  CONFIG = RelWithDebInfo
+  FLAGS = -O2 -g -DNDEBUG
+  LINK_LIBRARIES = lib/libgtest_main.a  lib/libgtest.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
+  OBJECT_DIR = CMakeFiles\r8_spin_test.dir
+  POST_BUILD = C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\harsh\Desktop\MiniExchange\build_check && "C:\Program Files\CMake\bin\cmake.exe" -P C:/Users/harsh/Desktop/MiniExchange/build_check/r8_spin_test_e3b0c442_discovery.cmake -- "
+  PRE_LINK = cd .
+  RESTAT = 1
+  TARGET_FILE = r8_spin_test.exe
+  TARGET_IMPLIB = libr8_spin_test.dll.a
+  TARGET_PDB = r8_spin_test.exe.dbg
+  TARGET_SUPPORT_DIR = CMakeFiles\r8_spin_test.dir
 
 # =============================================================================
 # Object build statements for EXECUTABLE target benchmark_harness
@@ -1966,7 +2323,92 @@ build _deps/benchmark-build/src/CMakeFiles/install/strip.util: CUSTOM_COMMAND _d
 build _deps/benchmark-build/src/install/strip: phony _deps/benchmark-build/src/CMakeFiles/install/strip.util
 
 # =============================================================================
+# Write statements declared in CMakeLists.txt:
+# C:/Users/harsh/Desktop/MiniExchange/CMakeLists.txt
+# =============================================================================
+
+
+#############################################
+# Utility command for test
+
+build _deps/nlohmann_json-build/CMakeFiles/test.util: CUSTOM_COMMAND
+  COMMAND = C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\harsh\Desktop\MiniExchange\build_check\_deps\nlohmann_json-build && "C:\Program Files\CMake\bin\ctest.exe" "
+  DESC = Running tests...
+  pool = console
+  restat = 1
+
+build _deps/nlohmann_json-build/test: phony _deps/nlohmann_json-build/CMakeFiles/test.util
+
+
+#############################################
+# Utility command for edit_cache
+
+build _deps/nlohmann_json-build/CMakeFiles/edit_cache.util: CUSTOM_COMMAND
+  COMMAND = C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\harsh\Desktop\MiniExchange\build_check\_deps\nlohmann_json-build && "C:\Program Files\CMake\bin\cmake-gui.exe" -SC:\Users\harsh\Desktop\MiniExchange -BC:\Users\harsh\Desktop\MiniExchange\build_check"
+  DESC = Running CMake cache editor...
+  pool = console
+  restat = 1
+
+build _deps/nlohmann_json-build/edit_cache: phony _deps/nlohmann_json-build/CMakeFiles/edit_cache.util
+
+
+#############################################
+# Utility command for rebuild_cache
+
+build _deps/nlohmann_json-build/CMakeFiles/rebuild_cache.util: CUSTOM_COMMAND
+  COMMAND = C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\harsh\Desktop\MiniExchange\build_check\_deps\nlohmann_json-build && "C:\Program Files\CMake\bin\cmake.exe" --regenerate-during-build -SC:\Users\harsh\Desktop\MiniExchange -BC:\Users\harsh\Desktop\MiniExchange\build_check"
+  DESC = Running CMake to regenerate build system...
+  pool = console
+  restat = 1
+
+build _deps/nlohmann_json-build/rebuild_cache: phony _deps/nlohmann_json-build/CMakeFiles/rebuild_cache.util
+
+
+#############################################
+# Utility command for list_install_components
+
+build _deps/nlohmann_json-build/list_install_components: phony
+
+
+#############################################
+# Utility command for install
+
+build _deps/nlohmann_json-build/CMakeFiles/install.util: CUSTOM_COMMAND _deps/nlohmann_json-build/all
+  COMMAND = C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\harsh\Desktop\MiniExchange\build_check\_deps\nlohmann_json-build && "C:\Program Files\CMake\bin\cmake.exe" -P cmake_install.cmake"
+  DESC = Install the project...
+  pool = console
+  restat = 1
+
+build _deps/nlohmann_json-build/install: phony _deps/nlohmann_json-build/CMakeFiles/install.util
+
+
+#############################################
+# Utility command for install/local
+
+build _deps/nlohmann_json-build/CMakeFiles/install/local.util: CUSTOM_COMMAND _deps/nlohmann_json-build/all
+  COMMAND = C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\harsh\Desktop\MiniExchange\build_check\_deps\nlohmann_json-build && "C:\Program Files\CMake\bin\cmake.exe" -DCMAKE_INSTALL_LOCAL_ONLY=1 -P cmake_install.cmake"
+  DESC = Installing only the local directory...
+  pool = console
+  restat = 1
+
+build _deps/nlohmann_json-build/install/local: phony _deps/nlohmann_json-build/CMakeFiles/install/local.util
+
+
+#############################################
+# Utility command for install/strip
+
+build _deps/nlohmann_json-build/CMakeFiles/install/strip.util: CUSTOM_COMMAND _deps/nlohmann_json-build/all
+  COMMAND = C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\harsh\Desktop\MiniExchange\build_check\_deps\nlohmann_json-build && "C:\Program Files\CMake\bin\cmake.exe" -DCMAKE_INSTALL_DO_STRIP=1 -P cmake_install.cmake"
+  DESC = Installing the project stripped...
+  pool = console
+  restat = 1
+
+build _deps/nlohmann_json-build/install/strip: phony _deps/nlohmann_json-build/CMakeFiles/install/strip.util
+
+# =============================================================================
 # Target aliases.
+
+build adapters_udp: phony libadapters_udp.a
 
 build benchmark: phony _deps/benchmark-build/src/libbenchmark.a
 
@@ -1993,6 +2435,8 @@ build gmock_main: phony lib/libgmock_main.a
 build gtest: phony lib/libgtest.a
 
 build gtest_main: phony lib/libgtest_main.a
+
+build inbound_queue_test: phony inbound_queue_test.exe
 
 build integration_test: phony integration_test.exe
 
@@ -2030,11 +2474,25 @@ build price_level_test: phony price_level_test.exe
 
 build queue_benchmark: phony queue_benchmark.exe
 
+build r8_spin_test: phony r8_spin_test.exe
+
+build response_routing_test: phony response_routing_test.exe
+
 build spsc_ring_buffer_test: phony spsc_ring_buffer_test.exe
 
 build spsc_stress_test: phony spsc_stress_test.exe
 
 build text_protocol: phony libtext_protocol.a
+
+build udp_book_builder_test: phony udp_book_builder_test.exe
+
+build udp_e2e_dod_test: phony udp_e2e_dod_test.exe
+
+build udp_feed_message_test: phony udp_feed_message_test.exe
+
+build udp_publisher_e2e_test: phony udp_publisher_e2e_test.exe
+
+build udp_publisher_test: phony udp_publisher_test.exe
 
 build workload_generator: phony libworkload_generator.a
 
@@ -2048,7 +2506,7 @@ build workload_generator_test: phony workload_generator_test.exe
 #############################################
 # Folder: C:/Users/harsh/Desktop/MiniExchange/build_check
 
-build all: phony liborderbook.a libengine.a core_types_test.exe core_trade_test.exe order_types_test.exe events_test.exe interfaces_test.exe price_level_test.exe order_book_test.exe order_pool_test.exe matching_engine_test.exe integration_test.exe edge_case_test.exe pool_exhaustion_test.exe libtext_protocol.a libworkload_generator.a workload_generator_test.exe mini_exchange.exe latency_recorder_test.exe engine_command_test.exe spsc_ring_buffer_test.exe spsc_stress_test.exe benchmark_harness.exe queue_benchmark.exe _deps/googletest-build/all _deps/benchmark-build/all
+build all: phony liborderbook.a libengine.a core_types_test.exe core_trade_test.exe order_types_test.exe events_test.exe interfaces_test.exe price_level_test.exe order_book_test.exe order_pool_test.exe matching_engine_test.exe integration_test.exe edge_case_test.exe pool_exhaustion_test.exe libtext_protocol.a libadapters_udp.a udp_feed_message_test.exe udp_publisher_test.exe udp_publisher_e2e_test.exe udp_book_builder_test.exe udp_e2e_dod_test.exe libworkload_generator.a workload_generator_test.exe mini_exchange.exe latency_recorder_test.exe engine_command_test.exe spsc_ring_buffer_test.exe spsc_stress_test.exe inbound_queue_test.exe response_routing_test.exe r8_spin_test.exe benchmark_harness.exe queue_benchmark.exe _deps/googletest-build/all _deps/benchmark-build/all _deps/nlohmann_json-build/all
 
 # =============================================================================
 
@@ -2086,20 +2544,27 @@ build _deps/googletest-build/googlemock/all: phony lib/libgmock.a lib/libgmock_m
 build _deps/googletest-build/googletest/all: phony lib/libgtest.a lib/libgtest_main.a
 
 # =============================================================================
+
+#############################################
+# Folder: C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/nlohmann_json-build
+
+build _deps/nlohmann_json-build/all: phony
+
+# =============================================================================
 # Built-in targets
 
 
 #############################################
 # Re-run CMake if any of its inputs changed.
 
-build build.ninja C$:/Users/harsh/Desktop/MiniExchange/build_check/cmake_install.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-build/cmake_install.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-build/googlemock/cmake_install.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-build/googletest/cmake_install.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/benchmark-build/cmake_install.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/benchmark-build/src/cmake_install.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/CTestTestfile.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-build/CTestTestfile.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-build/googlemock/CTestTestfile.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-build/googletest/CTestTestfile.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/benchmark-build/CTestTestfile.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/benchmark-build/src/CTestTestfile.cmake: RERUN_CMAKE | C$:/Program$ Files/CMake/share/cmake-4.4/Modules/BasicConfigVersion-AnyNewerVersion.cmake.in C$:/Program$ Files/CMake/share/cmake-4.4/Modules/BasicConfigVersion-SameMajorVersion.cmake.in C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeCInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeCXXInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeCheckCompilerFlagCommonPatterns.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeCommonLanguageInclude.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeDependentOption.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeGenericSystem.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeInitializeConfigs.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeLanguageInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakePackageConfigHelpers.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeRCInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeSystemSpecificInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeSystemSpecificInitialize.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CheckCXXCompilerFlag.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CheckCXXSourceCompiles.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CheckIncludeFileCXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CheckLibraryExists.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Compiler/CMakeCommonCompilerMacros.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Compiler/GNU-C.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Compiler/GNU-CXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Compiler/GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/ExternalProject/shared_internal_commands.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FetchContent.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FetchContent/CMakeLists.cmake.in C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindGit.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindPackageHandleStandardArgs.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindPackageMessage.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindPython3.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindPython/Support.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindThreads.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/GNUInstallDirs.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/GoogleTest.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CMakeCLinkerInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CMakeCXXLinkerInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CMakeCommonLinkerInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CheckCompilerFlag.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CheckFlagCommonConfig.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CheckSourceCompiles.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Linker/GNU-C.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Linker/GNU-CXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Linker/GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Linker/GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-GNU-C.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-GNU-CXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU-C-ABI.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU-C.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU-CXX-ABI.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU-CXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-Initialize.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-windres.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/WindowsPaths.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/WriteBasicConfigVersionFile.cmake C$:/Users/harsh/Desktop/MiniExchange/CMakeLists.txt CMakeCache.txt CMakeFiles/4.4.0-rc2/CMakeCCompiler.cmake CMakeFiles/4.4.0-rc2/CMakeCXXCompiler.cmake CMakeFiles/4.4.0-rc2/CMakeRCCompiler.cmake CMakeFiles/4.4.0-rc2/CMakeSystem.cmake _deps/benchmark-src/CMakeLists.txt _deps/benchmark-src/cmake/AddCXXCompilerFlag.cmake _deps/benchmark-src/cmake/CXXFeatureCheck.cmake _deps/benchmark-src/cmake/Config.cmake.in _deps/benchmark-src/cmake/GetGitVersion.cmake _deps/benchmark-src/cmake/benchmark.pc.in _deps/benchmark-src/cmake/benchmark_main.pc.in _deps/benchmark-src/src/CMakeLists.txt _deps/googletest-src/CMakeLists.txt _deps/googletest-src/googlemock/CMakeLists.txt _deps/googletest-src/googlemock/cmake/gmock.pc.in _deps/googletest-src/googlemock/cmake/gmock_main.pc.in _deps/googletest-src/googletest/CMakeLists.txt _deps/googletest-src/googletest/cmake/Config.cmake.in _deps/googletest-src/googletest/cmake/gtest.pc.in _deps/googletest-src/googletest/cmake/gtest_main.pc.in _deps/googletest-src/googletest/cmake/internal_utils.cmake
+build build.ninja C$:/Users/harsh/Desktop/MiniExchange/build_check/cmake_install.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-build/cmake_install.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-build/googlemock/cmake_install.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-build/googletest/cmake_install.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/benchmark-build/cmake_install.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/benchmark-build/src/cmake_install.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/nlohmann_json-build/cmake_install.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/CTestTestfile.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-build/CTestTestfile.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-build/googlemock/CTestTestfile.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-build/googletest/CTestTestfile.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/benchmark-build/CTestTestfile.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/benchmark-build/src/CTestTestfile.cmake C$:/Users/harsh/Desktop/MiniExchange/build_check/_deps/nlohmann_json-build/CTestTestfile.cmake: RERUN_CMAKE | C$:/Program$ Files/CMake/share/cmake-4.4/Modules/BasicConfigVersion-AnyNewerVersion.cmake.in C$:/Program$ Files/CMake/share/cmake-4.4/Modules/BasicConfigVersion-SameMajorVersion.cmake.in C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeCInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeCXXInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeCheckCompilerFlagCommonPatterns.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeCommonLanguageInclude.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeDependentOption.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeGenericSystem.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeInitializeConfigs.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeLanguageInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakePackageConfigHelpers.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeRCInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeSystemSpecificInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeSystemSpecificInitialize.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CheckCXXCompilerFlag.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CheckCXXSourceCompiles.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CheckIncludeFileCXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CheckLibraryExists.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Compiler/CMakeCommonCompilerMacros.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Compiler/GNU-C.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Compiler/GNU-CXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Compiler/GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/ExternalProject.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/ExternalProject/shared_internal_commands.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FetchContent.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FetchContent/CMakeLists.cmake.in C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindGit.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindPackageHandleStandardArgs.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindPackageMessage.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindPython3.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindPython/Support.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindThreads.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/GNUInstallDirs.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/GoogleTest.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CMakeCLinkerInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CMakeCXXLinkerInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CMakeCommonLinkerInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CheckCompilerFlag.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CheckFlagCommonConfig.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CheckSourceCompiles.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Linker/GNU-C.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Linker/GNU-CXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Linker/GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Linker/GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-GNU-C.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-GNU-CXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU-C-ABI.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU-C.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU-CXX-ABI.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU-CXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-Initialize.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-windres.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/WindowsPaths.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/WriteBasicConfigVersionFile.cmake C$:/Users/harsh/Desktop/MiniExchange/CMakeLists.txt CMakeCache.txt CMakeFiles/4.4.0-rc2/CMakeCCompiler.cmake CMakeFiles/4.4.0-rc2/CMakeCXXCompiler.cmake CMakeFiles/4.4.0-rc2/CMakeRCCompiler.cmake CMakeFiles/4.4.0-rc2/CMakeSystem.cmake _deps/benchmark-src/CMakeLists.txt _deps/benchmark-src/cmake/AddCXXCompilerFlag.cmake _deps/benchmark-src/cmake/CXXFeatureCheck.cmake _deps/benchmark-src/cmake/Config.cmake.in _deps/benchmark-src/cmake/GetGitVersion.cmake _deps/benchmark-src/cmake/benchmark.pc.in _deps/benchmark-src/cmake/benchmark_main.pc.in _deps/benchmark-src/src/CMakeLists.txt _deps/googletest-src/CMakeLists.txt _deps/googletest-src/googlemock/CMakeLists.txt _deps/googletest-src/googlemock/cmake/gmock.pc.in _deps/googletest-src/googlemock/cmake/gmock_main.pc.in _deps/googletest-src/googletest/CMakeLists.txt _deps/googletest-src/googletest/cmake/Config.cmake.in _deps/googletest-src/googletest/cmake/gtest.pc.in _deps/googletest-src/googletest/cmake/gtest_main.pc.in _deps/googletest-src/googletest/cmake/internal_utils.cmake _deps/nlohmann_json-src/CMakeLists.txt _deps/nlohmann_json-src/cmake/config.cmake.in _deps/nlohmann_json-src/cmake/nlohmann_jsonConfigVersion.cmake.in _deps/nlohmann_json-src/cmake/pkg-config.pc.in
   pool = console
 
 
 #############################################
 # A missing CMake input file is not an error.
 
-build C$:/Program$ Files/CMake/share/cmake-4.4/Modules/BasicConfigVersion-AnyNewerVersion.cmake.in C$:/Program$ Files/CMake/share/cmake-4.4/Modules/BasicConfigVersion-SameMajorVersion.cmake.in C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeCInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeCXXInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeCheckCompilerFlagCommonPatterns.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeCommonLanguageInclude.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeDependentOption.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeGenericSystem.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeInitializeConfigs.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeLanguageInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakePackageConfigHelpers.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeRCInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeSystemSpecificInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeSystemSpecificInitialize.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CheckCXXCompilerFlag.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CheckCXXSourceCompiles.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CheckIncludeFileCXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CheckLibraryExists.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Compiler/CMakeCommonCompilerMacros.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Compiler/GNU-C.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Compiler/GNU-CXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Compiler/GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/ExternalProject/shared_internal_commands.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FetchContent.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FetchContent/CMakeLists.cmake.in C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindGit.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindPackageHandleStandardArgs.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindPackageMessage.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindPython3.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindPython/Support.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindThreads.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/GNUInstallDirs.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/GoogleTest.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CMakeCLinkerInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CMakeCXXLinkerInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CMakeCommonLinkerInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CheckCompilerFlag.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CheckFlagCommonConfig.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CheckSourceCompiles.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Linker/GNU-C.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Linker/GNU-CXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Linker/GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Linker/GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-GNU-C.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-GNU-CXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU-C-ABI.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU-C.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU-CXX-ABI.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU-CXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-Initialize.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-windres.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/WindowsPaths.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/WriteBasicConfigVersionFile.cmake C$:/Users/harsh/Desktop/MiniExchange/CMakeLists.txt CMakeCache.txt CMakeFiles/4.4.0-rc2/CMakeCCompiler.cmake CMakeFiles/4.4.0-rc2/CMakeCXXCompiler.cmake CMakeFiles/4.4.0-rc2/CMakeRCCompiler.cmake CMakeFiles/4.4.0-rc2/CMakeSystem.cmake _deps/benchmark-src/CMakeLists.txt _deps/benchmark-src/cmake/AddCXXCompilerFlag.cmake _deps/benchmark-src/cmake/CXXFeatureCheck.cmake _deps/benchmark-src/cmake/Config.cmake.in _deps/benchmark-src/cmake/GetGitVersion.cmake _deps/benchmark-src/cmake/benchmark.pc.in _deps/benchmark-src/cmake/benchmark_main.pc.in _deps/benchmark-src/src/CMakeLists.txt _deps/googletest-src/CMakeLists.txt _deps/googletest-src/googlemock/CMakeLists.txt _deps/googletest-src/googlemock/cmake/gmock.pc.in _deps/googletest-src/googlemock/cmake/gmock_main.pc.in _deps/googletest-src/googletest/CMakeLists.txt _deps/googletest-src/googletest/cmake/Config.cmake.in _deps/googletest-src/googletest/cmake/gtest.pc.in _deps/googletest-src/googletest/cmake/gtest_main.pc.in _deps/googletest-src/googletest/cmake/internal_utils.cmake: phony
+build C$:/Program$ Files/CMake/share/cmake-4.4/Modules/BasicConfigVersion-AnyNewerVersion.cmake.in C$:/Program$ Files/CMake/share/cmake-4.4/Modules/BasicConfigVersion-SameMajorVersion.cmake.in C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeCInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeCXXInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeCheckCompilerFlagCommonPatterns.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeCommonLanguageInclude.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeDependentOption.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeGenericSystem.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeInitializeConfigs.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeLanguageInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakePackageConfigHelpers.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeRCInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeSystemSpecificInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CMakeSystemSpecificInitialize.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CheckCXXCompilerFlag.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CheckCXXSourceCompiles.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CheckIncludeFileCXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/CheckLibraryExists.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Compiler/CMakeCommonCompilerMacros.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Compiler/GNU-C.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Compiler/GNU-CXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Compiler/GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/ExternalProject.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/ExternalProject/shared_internal_commands.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FetchContent.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FetchContent/CMakeLists.cmake.in C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindGit.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindPackageHandleStandardArgs.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindPackageMessage.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindPython3.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindPython/Support.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/FindThreads.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/GNUInstallDirs.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/GoogleTest.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CMakeCLinkerInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CMakeCXXLinkerInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CMakeCommonLinkerInformation.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CheckCompilerFlag.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CheckFlagCommonConfig.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Internal/CheckSourceCompiles.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Linker/GNU-C.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Linker/GNU-CXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Linker/GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Linker/GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-GNU-C.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-GNU-CXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU-C-ABI.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU-C.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU-CXX-ABI.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU-CXX.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-GNU.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-Initialize.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows-windres.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/Windows.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/Platform/WindowsPaths.cmake C$:/Program$ Files/CMake/share/cmake-4.4/Modules/WriteBasicConfigVersionFile.cmake C$:/Users/harsh/Desktop/MiniExchange/CMakeLists.txt CMakeCache.txt CMakeFiles/4.4.0-rc2/CMakeCCompiler.cmake CMakeFiles/4.4.0-rc2/CMakeCXXCompiler.cmake CMakeFiles/4.4.0-rc2/CMakeRCCompiler.cmake CMakeFiles/4.4.0-rc2/CMakeSystem.cmake _deps/benchmark-src/CMakeLists.txt _deps/benchmark-src/cmake/AddCXXCompilerFlag.cmake _deps/benchmark-src/cmake/CXXFeatureCheck.cmake _deps/benchmark-src/cmake/Config.cmake.in _deps/benchmark-src/cmake/GetGitVersion.cmake _deps/benchmark-src/cmake/benchmark.pc.in _deps/benchmark-src/cmake/benchmark_main.pc.in _deps/benchmark-src/src/CMakeLists.txt _deps/googletest-src/CMakeLists.txt _deps/googletest-src/googlemock/CMakeLists.txt _deps/googletest-src/googlemock/cmake/gmock.pc.in _deps/googletest-src/googlemock/cmake/gmock_main.pc.in _deps/googletest-src/googletest/CMakeLists.txt _deps/googletest-src/googletest/cmake/Config.cmake.in _deps/googletest-src/googletest/cmake/gtest.pc.in _deps/googletest-src/googletest/cmake/gtest_main.pc.in _deps/googletest-src/googletest/cmake/internal_utils.cmake _deps/nlohmann_json-src/CMakeLists.txt _deps/nlohmann_json-src/cmake/config.cmake.in _deps/nlohmann_json-src/cmake/nlohmann_jsonConfigVersion.cmake.in _deps/nlohmann_json-src/cmake/pkg-config.pc.in: phony
 
 
 #############################################

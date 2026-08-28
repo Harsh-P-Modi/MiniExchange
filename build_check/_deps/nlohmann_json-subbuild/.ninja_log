@@ -1,0 +1,21 @@
+# ninja log v7
+4	167	8096466531512914	nlohmann_json-populate-prefix/src/nlohmann_json-populate-stamp/nlohmann_json-populate-mkdir	11ebd0b618225b45
+4	167	8096466531512914	C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/nlohmann_json-subbuild/nlohmann_json-populate-prefix/src/nlohmann_json-populate-stamp/nlohmann_json-populate-mkdir	11ebd0b618225b45
+168	34013	8096466869959290	nlohmann_json-populate-prefix/src/nlohmann_json-populate-stamp/nlohmann_json-populate-download	e3ec6b3d458cb55d
+168	34013	8096466869959290	C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/nlohmann_json-subbuild/nlohmann_json-populate-prefix/src/nlohmann_json-populate-stamp/nlohmann_json-populate-download	e3ec6b3d458cb55d
+34017	34431	8096466870017977	nlohmann_json-populate-prefix/src/nlohmann_json-populate-stamp/nlohmann_json-populate-update	7adee5cc62eeb028
+34017	34431	8096466870017977	C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/nlohmann_json-subbuild/nlohmann_json-populate-prefix/src/nlohmann_json-populate-stamp/nlohmann_json-populate-update	7adee5cc62eeb028
+34431	34596	8096466875807997	nlohmann_json-populate-prefix/src/nlohmann_json-populate-stamp/nlohmann_json-populate-patch	a12efccaedc68b0b
+34431	34596	8096466875807997	C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/nlohmann_json-subbuild/nlohmann_json-populate-prefix/src/nlohmann_json-populate-stamp/nlohmann_json-populate-patch	a12efccaedc68b0b
+34597	34753	8096466877240876	nlohmann_json-populate-prefix/src/nlohmann_json-populate-stamp/nlohmann_json-populate-configure	ed8751fa7516c93e
+34597	34753	8096466877240876	C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/nlohmann_json-subbuild/nlohmann_json-populate-prefix/src/nlohmann_json-populate-stamp/nlohmann_json-populate-configure	ed8751fa7516c93e
+34753	34914	8096466879000395	nlohmann_json-populate-prefix/src/nlohmann_json-populate-stamp/nlohmann_json-populate-build	ebec06bdeb4eacd7
+34753	34914	8096466879000395	C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/nlohmann_json-subbuild/nlohmann_json-populate-prefix/src/nlohmann_json-populate-stamp/nlohmann_json-populate-build	ebec06bdeb4eacd7
+34915	35076	8096466880600569	nlohmann_json-populate-prefix/src/nlohmann_json-populate-stamp/nlohmann_json-populate-install	4e4be424062c63fc
+34915	35076	8096466880600569	C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/nlohmann_json-subbuild/nlohmann_json-populate-prefix/src/nlohmann_json-populate-stamp/nlohmann_json-populate-install	4e4be424062c63fc
+35077	35243	8096466882196197	nlohmann_json-populate-prefix/src/nlohmann_json-populate-stamp/nlohmann_json-populate-test	8a4f7b230c358853
+35077	35243	8096466882196197	C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/nlohmann_json-subbuild/nlohmann_json-populate-prefix/src/nlohmann_json-populate-stamp/nlohmann_json-populate-test	8a4f7b230c358853
+35243	35456	8096466884276323	CMakeFiles/nlohmann_json-populate-complete	8b46204d5d86e7d9
+35243	35456	8096466884276323	nlohmann_json-populate-prefix/src/nlohmann_json-populate-stamp/nlohmann_json-populate-done	8b46204d5d86e7d9
+35243	35456	8096466884276323	C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/nlohmann_json-subbuild/CMakeFiles/nlohmann_json-populate-complete	8b46204d5d86e7d9
+35243	35456	8096466884276323	C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/nlohmann_json-subbuild/nlohmann_json-populate-prefix/src/nlohmann_json-populate-stamp/nlohmann_json-populate-done	8b46204d5d86e7d9

@@ -48,19 +48,20 @@ TEST(NullEventSinkTest, OnTradeDoesNotCrash) {
         OrderId{10},
         OrderId{20},
         Price{10000},
-        Quantity{50}
+        Quantity{50},
+        false
     };
     // Must not crash; return value is void, so the call itself is the test.
     NullEventSink::instance()->on_trade(dummy_trade);
 }
 
 TEST(NullEventSinkTest, OnOrderAcceptedDoesNotCrash) {
-    OrderAccepted dummy_event{OrderId{42}, Side::Buy, Quantity{100}};
+    OrderAccepted dummy_event{OrderId{42}, Side::Buy, Quantity{100}, Price{5000}};
     NullEventSink::instance()->on_order_accepted(dummy_event);
 }
 
 TEST(NullEventSinkTest, OnOrderCancelledDoesNotCrash) {
-    OrderCancelled dummy_event{OrderId{99}, Quantity{30}};
+    OrderCancelled dummy_event{OrderId{99}, Quantity{30}, Side::Sell, Price{4200}};
     NullEventSink::instance()->on_order_cancelled(dummy_event);
 }
 
@@ -69,13 +70,13 @@ TEST(NullEventSinkTest, OnOrderCancelledDoesNotCrash) {
 TEST(NullEventSinkTest, PolymorphicDispatchAllMethods) {
     EventSink* sink = NullEventSink::instance();
 
-    Trade t{TradeSequence{5}, OrderId{1}, OrderId{2}, Price{500}, Quantity{10}};
+    Trade t{TradeSequence{5}, OrderId{1}, OrderId{2}, Price{500}, Quantity{10}, false};
     sink->on_trade(t);
 
-    OrderAccepted oa{OrderId{1}, Side::Sell, Quantity{25}};
+    OrderAccepted oa{OrderId{1}, Side::Sell, Quantity{25}, Price{500}};
     sink->on_order_accepted(oa);
 
-    OrderCancelled oc{OrderId{2}, Quantity{5}};
+    OrderCancelled oc{OrderId{2}, Quantity{5}, Side::Buy, Price{500}};
     sink->on_order_cancelled(oc);
     // If we reach here without a crash, polymorphic dispatch is working.
 }
@@ -102,14 +103,14 @@ TEST(RecordingEventSinkTest, CountsEachEventType) {
     RecordingEventSink sink;
     EventSink* base = &sink;
 
-    Trade t{TradeSequence{1}, OrderId{10}, OrderId{20}, Price{100}, Quantity{5}};
+    Trade t{TradeSequence{1}, OrderId{10}, OrderId{20}, Price{100}, Quantity{5}, false};
     base->on_trade(t);
     base->on_trade(t);
 
-    OrderAccepted oa{OrderId{10}, Side::Buy, Quantity{5}};
+    OrderAccepted oa{OrderId{10}, Side::Buy, Quantity{5}, Price{100}};
     base->on_order_accepted(oa);
 
-    OrderCancelled oc{OrderId{20}, Quantity{3}};
+    OrderCancelled oc{OrderId{20}, Quantity{3}, Side::Sell, Price{100}};
     base->on_order_cancelled(oc);
     base->on_order_cancelled(oc);
     base->on_order_cancelled(oc);

@@ -52,6 +52,17 @@ set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(benchmark)
 
+# nlohmann/json — Phase 7's first non-test/benchmark external dependency.
+# Scoped strictly to the JSON codec and protocol benchmark targets; never
+# linked into core/, engine/, orderbook/, or the binary_protocol adapter.
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG        v3.11.3
+)
+# Header-only library — no build step, just makes the target available.
+FetchContent_MakeAvailable(nlohmann_json)
+
 # Source root on the include path — applied via the warnings interface
 # library so all our targets pick it up without polluting third-party targets.
 target_include_directories(miniexchange_warnings INTERFACE ${CMAKE_SOURCE_DIR})
@@ -121,6 +132,42 @@ add_library(text_protocol
     adapters/text_protocol/text_protocol_renderer.cpp)
 target_link_libraries(text_protocol PRIVATE miniexchange_warnings)
 
+# UDP feed adapter library (Phase 6)
+add_library(adapters_udp
+    adapters/udp/udp_feed_publisher.cpp
+    adapters/udp/book_builder.cpp)
+target_link_libraries(adapters_udp PRIVATE miniexchange_warnings)
+
+# Phase 6: UDP feed message struct layout + SymbolId hash tests
+add_executable(udp_feed_message_test tests/udp_feed_message_test.cpp)
+target_link_libraries(udp_feed_message_test PRIVATE
+    GTest::gtest_main adapters_udp miniexchange_warnings)
+gtest_discover_tests(udp_feed_message_test)
+
+# Phase 6: UDP feed publisher tests (tasks 7–13)
+add_executable(udp_publisher_test tests/udp_publisher_test.cpp)
+target_link_libraries(udp_publisher_test PRIVATE
+    GTest::gtest_main adapters_udp miniexchange_warnings)
+gtest_discover_tests(udp_publisher_test)
+
+# Phase 6: Publisher end-to-end test against real MatchingEngine (task 14)
+add_executable(udp_publisher_e2e_test tests/udp_publisher_e2e_test.cpp)
+target_link_libraries(udp_publisher_e2e_test PRIVATE
+    GTest::gtest_main engine adapters_udp miniexchange_warnings)
+gtest_discover_tests(udp_publisher_e2e_test)
+
+# Phase 6: BookBuilder unit tests (tasks 15–19)
+add_executable(udp_book_builder_test tests/udp_book_builder_test.cpp)
+target_link_libraries(udp_book_builder_test PRIVATE
+    GTest::gtest_main adapters_udp miniexchange_warnings)
+gtest_discover_tests(udp_book_builder_test)
+
+# Phase 6: End-to-end Definition of Done tests (tasks 20–21)
+add_executable(udp_e2e_dod_test tests/udp_e2e_dod_test.cpp)
+target_link_libraries(udp_e2e_dod_test PRIVATE
+    GTest::gtest_main engine adapters_udp miniexchange_warnings)
+gtest_discover_tests(udp_e2e_dod_test)
+
 # TCP adapter library (Linux only — epoll-based, nonblocking)
 if(UNIX AND NOT APPLE)
     add_library(adapters_tcp
@@ -136,7 +183,7 @@ if(UNIX AND NOT APPLE)
     # Exchange server app — multi-threaded TCP composition root (Phase 5)
     add_executable(exchange_server apps/exchange_server/main.cpp)
     target_link_libraries(exchange_server PRIVATE
-        engine adapters_tcp text_protocol miniexchange_warnings)
+        engine adapters_tcp adapters_udp text_protocol miniexchange_warnings)
 
     # Exchange server E2E integration test (full round-trip through real sockets)
     add_executable(exchange_server_e2e_test tests/exchange_server_e2e_test.cpp)
@@ -150,6 +197,25 @@ if(UNIX AND NOT APPLE)
         apps/benchmark/latency_recorder.cpp)
     target_link_libraries(tcp_roundtrip_bench PRIVATE
         engine adapters_tcp text_protocol miniexchange_warnings)
+
+    # --- Phase 7: Binary protocol ---
+
+    # Binary protocol adapter library (Phase 7)
+    add_library(adapters_binary_protocol
+        adapters/binary_protocol/BinaryCodec.cpp)
+    target_link_libraries(adapters_binary_protocol PRIVATE miniexchange_warnings)
+
+    # Phase 7: Byte-order helpers unit tests
+    add_executable(binary_byte_order_test tests/binary_byte_order_test.cpp)
+    target_link_libraries(binary_byte_order_test PRIVATE
+        GTest::gtest_main miniexchange_warnings)
+    gtest_discover_tests(binary_byte_order_test)
+
+    # Phase 7: Binary codec encode/decode tests (tasks 4-7)
+    add_executable(binary_codec_test tests/binary_codec_test.cpp)
+    target_link_libraries(binary_codec_test PRIVATE
+        GTest::gtest_main adapters_binary_protocol miniexchange_warnings)
+    gtest_discover_tests(binary_codec_test)
 endif()
 
 # Tools libraries

@@ -32,6 +32,7 @@
 #include "adapters/tcp/tcp_server.hpp"
 #include "adapters/text_protocol/text_protocol_parser.hpp"
 #include "adapters/text_protocol/text_protocol_renderer.hpp"
+#include "adapters/udp/udp_feed_publisher.hpp"
 #include "core/EngineCommand.hpp"
 #include "core/TaggedCommand.hpp"
 #include "engine/matching_engine.hpp"
@@ -89,8 +90,30 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // --- Construct engine (NullEventSink — Phase 6 adds a real sink) ---
-    MatchingEngine engine;
+    // --- Create UDP feed publisher (Phase 6) ---
+    // Default: publish to localhost:9001. Override with env var
+    // MINIEXCHANGE_UDP_FEED_PORT if needed.
+    const char* feed_port_env = std::getenv("MINIEXCHANGE_UDP_FEED_PORT");
+    uint16_t feed_port = feed_port_env ? static_cast<uint16_t>(std::atoi(feed_port_env)) : 9001;
+
+    int udp_fd = ::socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+    if (udp_fd < 0) {
+        std::fprintf(stderr, "UDP socket() failed: %s\n", std::strerror(errno));
+        return 1;
+    }
+
+    // Single subscriber: localhost at feed_port (simulated unicast fan-out)
+    miniexchange::udp::Subscriber sub{};
+    sub.addr.sin_family = AF_INET;
+    sub.addr.sin_port = htons(feed_port);
+    sub.addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    constexpr miniexchange::SymbolId kSymbol{1};
+    miniexchange::udp::UdpFeedPublisher feed_publisher(
+        kSymbol, {sub}, udp_fd, 500 /* snapshot every 500 messages */);
+
+    // --- Construct engine with UDP feed publisher as EventSink ---
+    MatchingEngine engine(&feed_publisher);
 
     // --- Construct SPSC queues ---
     // Inbound: I/O thread (producer) → engine thread (consumer)
@@ -204,6 +227,8 @@ int main(int argc, char* argv[]) {
 
     ::close(g_eventfd);
     g_eventfd = -1;
+
+    ::close(udp_fd);
 
     std::fprintf(stderr, "exchange_server shutdown complete\n");
     return 0;

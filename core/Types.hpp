@@ -168,9 +168,23 @@ struct TradeSequence {
     }
 };
 
+struct SymbolId {
+    uint32_t value;
+
+    constexpr SymbolId() : value(0) {}
+    explicit constexpr SymbolId(uint32_t v) : value(v) {}
+
+    constexpr bool operator==(const SymbolId& other) const {
+        return value == other.value;
+    }
+    constexpr bool operator!=(const SymbolId& other) const {
+        return value != other.value;
+    }
+};
+
 }  // namespace miniexchange
 
-// Hash support for OrderId (needed for unordered_map/unordered_set)
+// Hash support for domain primitives (needed for unordered_map/unordered_set)
 namespace std {
 template <>
 struct hash<miniexchange::OrderId> {
@@ -183,6 +197,13 @@ template <>
 struct hash<miniexchange::ClientId> {
     std::size_t operator()(const miniexchange::ClientId& id) const noexcept {
         return std::hash<uint64_t>{}(id.value);
+    }
+};
+
+template <>
+struct hash<miniexchange::SymbolId> {
+    std::size_t operator()(const miniexchange::SymbolId& id) const noexcept {
+        return std::hash<uint32_t>{}(id.value);
     }
 };
 }  // namespace std
