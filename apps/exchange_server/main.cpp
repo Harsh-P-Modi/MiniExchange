@@ -7,10 +7,15 @@
 //
 // Shutdown: SIGINT/SIGTERM → atomic flag + eventfd write → both threads exit.
 //
-// This is the first multi-threaded, network-facing app in MiniExchange.
-// It wires together all Phase 5 components:
+// Protocol selection (Phase 7): --protocol=binary (default) or
+// --protocol=plaintext (debug mode for manual netcat testing). Selected
+// once at startup — every connection on this server instance speaks the
+// same protocol. See specs/phase-07-binary-protocol/design.md §5.
+//
+// This is the multi-threaded, network-facing app in MiniExchange.
+// It wires together:
 //   - adapters/tcp/TcpServer (epoll loop, framing, connections)
-//   - adapters/text_protocol (parse commands, render responses)
+//   - adapters/text_protocol OR adapters/binary_protocol (selected at startup)
 //   - lockfree_queue/SpscRingBuffer (inbound + outbound queues)
 //   - engine/MatchingEngine (single-threaded matching)
 //   - core/TaggedCommand.hpp (queue payloads)
@@ -21,6 +26,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <variant>
 
@@ -30,6 +38,7 @@
 
 #include "adapters/tcp/framing.hpp"
 #include "adapters/tcp/tcp_server.hpp"
+#include "adapters/binary_protocol/GatewayCodec.hpp"
 #include "adapters/text_protocol/text_protocol_parser.hpp"
 #include "adapters/text_protocol/text_protocol_renderer.hpp"
 #include "adapters/udp/udp_feed_publisher.hpp"
@@ -65,15 +74,29 @@ static void install_signal_handlers() {
 }
 
 static uint16_t parse_port(int argc, char* argv[]) {
-    if (argc >= 2) {
-        int port = std::atoi(argv[1]);
+    for (int i = 1; i < argc; ++i) {
+        std::string_view arg(argv[i]);
+        if (arg.starts_with("--protocol=")) continue;  // skip protocol flag
+        int port = std::atoi(argv[i]);
         if (port > 0 && port <= 65535) {
             return static_cast<uint16_t>(port);
         }
         std::fprintf(stderr, "Invalid port: %s (using default 9000)\n",
-                     argv[1]);
+                     argv[i]);
     }
     return 9000;
+}
+
+// Parse --protocol=binary|plaintext from argv. Default: binary.
+enum class ProtocolMode { Binary, Plaintext };
+
+static ProtocolMode parse_protocol(int argc, char* argv[]) {
+    for (int i = 1; i < argc; ++i) {
+        std::string_view arg(argv[i]);
+        if (arg == "--protocol=plaintext") return ProtocolMode::Plaintext;
+        if (arg == "--protocol=binary") return ProtocolMode::Binary;
+    }
+    return ProtocolMode::Binary;  // default
 }
 
 int main(int argc, char* argv[]) {
@@ -82,6 +105,29 @@ int main(int argc, char* argv[]) {
     using namespace miniexchange::text_protocol;
 
     const uint16_t port = parse_port(argc, argv);
+    const ProtocolMode protocol = parse_protocol(argc, argv);
+
+    // --- Protocol function slots (bound once at startup) ---
+    // These have the same signatures as text_protocol::parse/render/render_error
+    // so the frame handler and drain handler lambdas work identically
+    // regardless of which protocol was selected.
+    using ParseFn = std::function<text_protocol::ParseResult(std::string_view)>;
+    using RenderFn = std::function<std::string(const EngineResponse&)>;
+    using RenderErrorFn = std::function<std::string(const std::string&)>;
+
+    ParseFn parse_fn;
+    RenderFn render_fn;
+    RenderErrorFn render_error_fn;
+
+    if (protocol == ProtocolMode::Binary) {
+        parse_fn = binary_protocol::parse_binary;
+        render_fn = binary_protocol::render_binary;
+        render_error_fn = binary_protocol::render_binary_error;
+    } else {
+        parse_fn = text_protocol::parse;
+        render_fn = text_protocol::render;
+        render_error_fn = text_protocol::render_error;
+    }
 
     // --- Create eventfd (nonblocking for edge-triggered epoll) ---
     g_eventfd = ::eventfd(0, EFD_NONBLOCK);
@@ -127,15 +173,16 @@ int main(int argc, char* argv[]) {
     // Wire the frame handler: parse incoming messages, push valid
     // commands to inbound queue, send parse errors directly back.
     server.set_frame_handler(
-        [&inbound, &server](ClientId client_id, std::string_view payload) {
-            auto result = parse(payload);
+        [&inbound, &server, &parse_fn, &render_error_fn](
+            ClientId client_id, std::string_view payload) {
+            auto result = parse_fn(payload);
             std::visit(
                 [&](auto& val) {
                     using T = std::decay_t<decltype(val)>;
                     if constexpr (std::is_same_v<T, ParseError>) {
                         // Protocol-level error: respond directly without
-                        // engine round-trip (design.md §4, step 3).
-                        auto err_msg = render_error(val.message);
+                        // engine round-trip.
+                        auto err_msg = render_error_fn(val.message);
                         server.send_to_client(client_id,
                                               frame_message(err_msg));
                     } else {
@@ -156,10 +203,10 @@ int main(int argc, char* argv[]) {
     // Drains the outbound queue to exhaustion, renders + frames each
     // response, and sends to the correct client.
     server.set_response_drain_handler(
-        [&outbound, &server]() {
+        [&outbound, &server, &render_fn]() {
             TaggedResponse resp{};
             while (outbound.try_pop(resp)) {
-                auto rendered = render(resp.response);
+                auto rendered = render_fn(resp.response);
                 server.send_to_client(resp.client, frame_message(rendered));
             }
         });
@@ -170,7 +217,8 @@ int main(int argc, char* argv[]) {
     // --- Spawn I/O thread ---
     std::thread io_thread([&server]() { server.run(); });
 
-    std::fprintf(stderr, "exchange_server listening on port %u\n", port);
+    std::fprintf(stderr, "exchange_server listening on port %u (%s protocol)\n",
+                port, protocol == ProtocolMode::Binary ? "binary" : "plaintext");
 
     // --- Engine thread (main thread) ---
     // Spins on inbound queue, processes commands through the engine,

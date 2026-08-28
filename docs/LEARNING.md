@@ -4686,3 +4686,174 @@ Key design decisions and their costs:
 - **`GapLogger` injection**: same testability pattern as `EventSink` itself — dependency injection for anything that does I/O.
 
 The `EventSink` interface (`on_trade`, `on_order_accepted`, `on_order_cancelled`) was unchanged from Phase 1 — only the payloads were enriched. The engine doesn't know (or care) that a UDP feed exists; it just calls its `EventSink*` as always.
+
+
+## Phase 7: Binary Wire Protocol
+
+### Overview
+
+Phase 7 replaces Phase 5's plaintext text protocol as the TCP gateway's default wire format with a fixed-layout binary encoding. The deliverable is as much the *comparison benchmark* (binary vs. JSON encode/decode latency, payload size, allocation count) as the protocol itself — per the project charter, a protocol only has value with measured numbers attached.
+
+The phase introduces:
+- A fixed-width binary encoding for 6 message types (3 client→server, 3 server→client)
+- A JSON codec (nlohmann/json) built solely for fair benchmark comparison
+- Server-startup protocol selection (`--protocol=binary|plaintext`)
+- A protocol benchmark with honest attribution of where performance differences come from
+
+---
+
+### Message Structs and `MessageType` Enum
+
+**What it does:** Defines the on-wire data structures for the binary protocol — six structs representing the three request and three response message types, plus a `MessageType` discriminator byte and an `AnyMessage` variant for type-safe decoded output.
+
+**Exact location:** `adapters/binary_protocol/Message.hpp`
+
+**Why this data structure:**
+- Each struct is `std::is_trivially_copyable` (verified by `static_assert`). This is a prerequisite for the zero-allocation encode/decode pattern — if any struct contained a `std::string` or virtual function, it couldn't be written field-by-field into a flat buffer without allocation.
+- `Side` is stored as `uint8_t` (not `enum class Side`) in the wire struct to give explicit control over serialization width. The core `Side` enum class has a compiler-default underlying type (typically `int`, 4 bytes), but on the wire we only need 1 byte and we want that to be explicit, not dependent on compiler choices.
+- `AnyMessage` is a `std::variant` rather than a polymorphic hierarchy because `std::variant` stores all alternatives inline — `decode()` can construct one on the stack with zero allocation. A `unique_ptr<Message>` hierarchy would violate NFR1.
+
+**Complexity:** O(1) for all operations — these are pure data, no logic.
+
+**Benefits:** Compile-time guarantee that no message struct can accidentally become non-trivially-copyable (the `static_assert` catches it). Explicit wire sizes are documented in comments on each struct.
+
+**Drawbacks:** Adding a new message type requires touching both Message.hpp (struct definition) and BinaryCodec.cpp (encode/decode implementation). There's no auto-generation. This is acceptable because the message set is small and stable.
+
+**Alternatives considered:** Protocol Buffers / FlatBuffers — rejected because they'd add external tooling, code generation steps, and obscure the educational value of implementing a wire protocol from scratch. The whole point of Phase 7 for a portfolio is demonstrating you understand what protobuf does *for* you, by doing it yourself once.
+
+**Check your understanding:** Why does the `TradeNotificationMsg` have a `padding` byte after the type byte, even though the protocol doesn't use it for anything? (Hint: consider what happens to wire layout consistency if some messages have 2-byte "type+side" headers and others have 1-byte "type" headers.)
+
+---
+
+### Byte-Order Helpers (`ByteOrder.hpp`)
+
+**What it does:** Provides `to_network()`/`from_network()` functions that convert between host byte order and network byte order (big-endian) for all integer widths the protocol uses, including the core's strong-typed wrappers.
+
+**Exact location:** `adapters/binary_protocol/ByteOrder.hpp`
+
+**Why this approach:**
+- Raw integer overloads use `htons`/`htonl`/`htobe64` and their inverses. These are the standard POSIX/glibc functions for exactly this job.
+- The generic template for core strong types uses `decltype(T::value)` to deduce the underlying integer type. This avoids adding an `underlying_type` typedef to every struct in `core/Types.hpp` — a modification that would touch a lower-level module for the benefit of a higher-level adapter, violating the dependency direction.
+- Signed types (`int64_t` for `Price`) use `std::memcpy` to reinterpret the bit pattern as unsigned before swapping, then reinterpret back. This avoids undefined behavior from type-punning via `reinterpret_cast` and is what compilers optimize to a single `bswap` instruction anyway.
+
+**Complexity:** O(1) — each call is a single byte-swap instruction (or no-op on big-endian hosts).
+
+**Benefits:** Endianness correctness is cheap to do right (a handful of swap calls) and demonstrates proper wire protocol engineering for the portfolio's audience.
+
+**Drawbacks:** Requires Linux/glibc headers (`<endian.h>`, `<arpa/inet.h>`). Not portable to Windows — acceptable because the project's locked target is Linux only.
+
+**Alternatives considered:**
+- Little-endian-only (skip swapping): rejected because "a protocol that only works between machines sharing endianness isn't really a wire protocol."
+- Splitting 64-bit fields into two `htonl` calls: rejected because it adds per-field special-casing that the generic template avoids.
+- Adding `underlying_type` to core types: rejected because it modifies a lower layer for a higher layer's convenience.
+
+**Check your understanding:** Why does `to_network(Price{-42})` work correctly even though `htobe64` takes a `uint64_t`? What would go wrong if we used `static_cast<uint64_t>(price.value)` instead of `memcpy` for a negative price?
+
+---
+
+### BinaryCodec (`encode`/`decode`)
+
+**What it does:** Encodes message structs into caller-provided byte buffers and decodes byte buffers back into message structs. The codec is the central correctness-critical piece — everything else (gateway integration, benchmarks) builds on it.
+
+**Exact location:** `adapters/binary_protocol/BinaryCodec.hpp` (declarations + `detail::write_field`/`read_field` helpers), `adapters/binary_protocol/BinaryCodec.cpp` (implementation)
+
+**Why this pattern:**
+- `encode` writes into a `std::span<std::byte>` provided by the caller. This is the key NFR1 design: the codec never allocates because the buffer is caller-owned (a stack array in tests/benchmarks, or a pre-sized connection buffer in the gateway).
+- `decode` returns `std::optional<AnyMessage>` — `nullopt` for any malformed input (too short, unrecognized type byte). No exceptions for expected failures.
+- The `detail::write_field`/`read_field` helpers use `std::memcpy` for each field. This is not a whole-struct `memcpy` (which would include struct padding) — it's per-field, ensuring the wire layout is exactly the documented byte sequence regardless of compiler struct packing.
+- Each multi-byte field goes through `to_network`/`from_network` immediately before write / after read. This is applied uniformly and mechanically — no per-message special-casing of which fields need swapping.
+
+**Complexity:** O(1) for every message type — each encode/decode is a fixed number of memcpy + byte-swap operations.
+
+**Benefits:** Zero allocation (verified by instrumented test). Deterministic wire layout independent of compiler padding. Safe decode (returns nullopt, never UB).
+
+**Drawbacks:** Adding a field to a message type requires updating both the struct and the encode/decode function. No reflection or auto-generation.
+
+**How this connects to earlier phases:** The core types (`OrderId`, `Price`, `Quantity`, etc.) were designed in Phase 1 as thin wrappers with a public `.value` member. That design decision — which seemed like "just a struct" at the time — is what enables the generic `to_network(T wrapped)` template here without modifying Phase 1's code.
+
+**Check your understanding:** Why does decode check `in.size() < kLimitOrderAddWireSize` *before* reading any fields, rather than reading fields one-by-one and checking after each? What class of bugs does this prevent?
+
+---
+
+### Zero-Allocation Verification (NFR1)
+
+**What it does:** Overrides global `operator new`/`operator delete` with a counting implementation and asserts that encode/decode calls cause zero allocations.
+
+**Exact location:** `tests/binary_codec_alloc_test.cpp`
+
+**Why instrumented verification:**
+This can't just be asserted from code structure ("I see no `new` keyword, so it doesn't allocate"). Several subtle paths could introduce allocation:
+- `std::optional` *could* heap-allocate for large types (it doesn't for `AnyMessage`, but a future change to `AnyMessage`'s alternatives might push past the inline threshold on some implementations).
+- A refactor changing `std::span<std::byte>` to `std::vector<std::byte>` in the signature would silently allocate.
+- Even `std::variant` has implementation-defined behavior in edge cases.
+
+The instrumented test catches all of these as a regression guard — if any code path between "reset counter" and "check counter" allocates, the test fails, regardless of *why* it allocated.
+
+**Why a separate executable:** The `operator new` override is TU-global. Mixing it with tests that legitimately allocate (GoogleTest internals, std::string in other test helpers) would produce false positives.
+
+**Check your understanding:** If you moved the `operator new` override into a shared library instead of the test TU itself, would it still work? Why or why not? (Hint: linker symbol resolution order.)
+
+---
+
+### GatewayCodec (parse_binary / render_binary)
+
+**What it does:** Provides free functions with the same signatures as `text_protocol::parse`/`render`/`render_error`, enabling the gateway to switch protocols by binding different functions to `std::function` slots at startup.
+
+**Exact location:** `adapters/binary_protocol/GatewayCodec.hpp` (declarations), `adapters/binary_protocol/GatewayCodec.cpp` (implementation)
+
+**Why this architecture:**
+- The gateway picks its protocol exactly once at startup and never switches during a connection's lifetime. There's no runtime polymorphic dispatch per message — just a startup-time `std::function` binding.
+- A formal `ProtocolHandler` abstract class was considered and rejected: it would mean refactoring the working plaintext path into a class hierarchy purely to satisfy an interface that nothing here actually dispatches through polymorphically. The `std::function` approach gets the same "gateway doesn't know which protocol" property with less code and no modification of Phase 5's text protocol.
+- `parse_binary` returns `text_protocol::ParseResult` (the same variant type). This means the frame handler lambda's `std::visit` logic is completely unchanged — it just calls through `parse_fn` instead of `text_protocol::parse` directly.
+- Server-to-client message types appearing in a client-to-server frame are treated as parse errors (not silently ignored), because that would indicate a misbehaving client.
+
+**Complexity:** O(N) where N is the number of trades in an EngineResponse (for `render_binary`, which encodes one AckMsg + N TradeNotificationMsgs). O(1) for `parse_binary`.
+
+**Benefits:** No abstract class, no vtable dispatch per message, no modification of Phase 5's working code, protocol selection is a single startup-time branch.
+
+**Drawbacks:** The `EngineResponse` struct doesn't carry the original order_id (it's not in the response's fields), so AckMsg/RejectMsg are sent with `order_id=0`. This is a known limitation documented in the header — a production system would thread the order_id through the `TaggedResponse` struct. Acceptable for the portfolio's scope.
+
+**Alternatives considered:**
+- Abstract `ProtocolHandler` with virtual `parse_message`/`serialize_response`: rejected per the reasoning above.
+- Per-connection protocol negotiation (sniff first bytes): rejected because it adds detection cost and keeps both parsers warm for a capability nothing in scope needs.
+
+**Check your understanding:** If you needed to add per-connection protocol negotiation later (e.g., a TLS-ALPN-style handshake), what would you change? Would the `std::function` approach or the abstract-class approach adapt more easily? Why?
+
+---
+
+### Server-Startup Protocol Selection
+
+**What it does:** The `--protocol=binary|plaintext` flag in `apps/exchange_server/main.cpp` selects which parse/render functions are bound to the gateway's frame handler and drain handler.
+
+**Exact location:** `apps/exchange_server/main.cpp` (lines defining `ParseFn`, `RenderFn`, `RenderErrorFn` slots and the `if (protocol == ProtocolMode::Binary)` branch)
+
+**Why startup-time binding:**
+- The decision is made once, before any connections are accepted. Every client on that server instance speaks the same protocol.
+- `std::function` has a small overhead per call (typically one indirect jump), but this is negligible compared to the syscall cost of reading/writing TCP data, epoll wakeup latency, and SPSC queue operations — all of which are on the same critical path.
+- Plaintext mode exists for `netcat`-based manual testing during development, not for production traffic. It doesn't need to be a zero-cost abstraction.
+
+**Check your understanding:** The `std::function` slots capture by reference (`&parse_fn`, `&render_fn`). What would break if they captured by value instead? (Hint: `std::function` has move semantics, and the lambda is stored in the `TcpServer` object.)
+
+---
+
+### Benchmark Methodology and Interpretation Framework
+
+**What it does:** The protocol benchmark (`tools/protocol_benchmark/protocol_bench.cpp`) measures encode/decode latency with Google Benchmark, and reports payload size and allocation count as custom counters to enable *attribution* of latency differences.
+
+**Exact location:** `tools/protocol_benchmark/protocol_bench.cpp`, results in `benchmarks/results/phase-07-binary-vs-json.md`
+
+**Why attribution matters:**
+Saying "binary is 10× faster than JSON" is a headline, not an explanation. The benchmark is designed to answer *why*:
+- If JSON allocates N times per encode and binary allocates 0, and the latency ratio tracks the allocation count, then allocation dominates.
+- If the ratio is larger than allocation alone would explain, then CPU time for ASCII decimal formatting and field-name scanning is also significant.
+- Payload size differences translate to network bandwidth savings and reduced cache pressure, but those are system-level effects not captured by a codec microbenchmark.
+
+**What it doesn't tell you:** This measures codec latency in isolation. The actual system-level benefit of binary depends on how much of the total TCP round-trip latency is spent in serialization vs. elsewhere (epoll, queues, engine matching). Phase 5's TCP benchmark provides that system context.
+
+**Check your understanding:** nlohmann/json is known to be slower than simdjson or rapidjson. If you swapped in simdjson for decode, would binary still win? Why? (Hint: consider allocation patterns, not just parsing speed.)
+
+---
+
+### Phase 7 Summary
+
+Phase 7 demonstrates a complete binary wire protocol implementation: fixed-layout structs, network byte order for arbitrary-width types via a generic template that avoids modifying lower layers, zero-allocation codec verified by instrumented testing, and a comparison benchmark with honest attribution methodology. The gateway integration uses `std::function` startup-time binding rather than a class hierarchy — an example of choosing the simplest abstraction that satisfies the actual requirement (single startup-time choice, not per-message polymorphism). The benchmark exists to show *understanding* of where performance comes from, not just to produce a "binary is faster" headline.

@@ -180,10 +180,10 @@ if(UNIX AND NOT APPLE)
         GTest::gtest_main adapters_tcp miniexchange_warnings)
     gtest_discover_tests(tcp_server_test)
 
-    # Exchange server app — multi-threaded TCP composition root (Phase 5)
+    # Exchange server app — multi-threaded TCP composition root (Phase 5+7)
     add_executable(exchange_server apps/exchange_server/main.cpp)
     target_link_libraries(exchange_server PRIVATE
-        engine adapters_tcp adapters_udp text_protocol miniexchange_warnings)
+        engine adapters_tcp adapters_udp adapters_binary_protocol text_protocol miniexchange_warnings)
 
     # Exchange server E2E integration test (full round-trip through real sockets)
     add_executable(exchange_server_e2e_test tests/exchange_server_e2e_test.cpp)
@@ -202,8 +202,9 @@ if(UNIX AND NOT APPLE)
 
     # Binary protocol adapter library (Phase 7)
     add_library(adapters_binary_protocol
-        adapters/binary_protocol/BinaryCodec.cpp)
-    target_link_libraries(adapters_binary_protocol PRIVATE miniexchange_warnings)
+        adapters/binary_protocol/BinaryCodec.cpp
+        adapters/binary_protocol/GatewayCodec.cpp)
+    target_link_libraries(adapters_binary_protocol PUBLIC text_protocol PRIVATE miniexchange_warnings)
 
     # Phase 7: Byte-order helpers unit tests
     add_executable(binary_byte_order_test tests/binary_byte_order_test.cpp)
@@ -216,6 +217,48 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(binary_codec_test PRIVATE
         GTest::gtest_main adapters_binary_protocol miniexchange_warnings)
     gtest_discover_tests(binary_codec_test)
+
+    # Phase 7: Boundary-value round-trip tests (task 6)
+    add_executable(binary_codec_boundary_test tests/binary_codec_boundary_test.cpp)
+    target_link_libraries(binary_codec_boundary_test PRIVATE
+        GTest::gtest_main adapters_binary_protocol miniexchange_warnings)
+    gtest_discover_tests(binary_codec_boundary_test)
+
+    # Phase 7: Malformed-input decode tests (task 7)
+    add_executable(binary_codec_malformed_test tests/binary_codec_malformed_test.cpp)
+    target_link_libraries(binary_codec_malformed_test PRIVATE
+        GTest::gtest_main adapters_binary_protocol miniexchange_warnings)
+    gtest_discover_tests(binary_codec_malformed_test)
+
+    # Phase 7: Zero-heap-allocation verification (task 8, NFR1)
+    # Separate executable: overrides global operator new, can't share TU.
+    add_executable(binary_codec_alloc_test tests/binary_codec_alloc_test.cpp)
+    target_link_libraries(binary_codec_alloc_test PRIVATE
+        GTest::gtest_main adapters_binary_protocol miniexchange_warnings)
+    gtest_discover_tests(binary_codec_alloc_test)
+
+    # Phase 7: JSON codec library (benchmark-only, never linked into core/engine)
+    add_library(json_codec adapters/binary_protocol/JsonCodec.cpp)
+    target_link_libraries(json_codec PUBLIC
+        nlohmann_json::nlohmann_json PRIVATE miniexchange_warnings)
+
+    # Phase 7: JSON codec round-trip tests (task 9)
+    add_executable(json_codec_test tests/json_codec_test.cpp)
+    target_link_libraries(json_codec_test PRIVATE
+        GTest::gtest_main json_codec adapters_binary_protocol miniexchange_warnings)
+    gtest_discover_tests(json_codec_test)
+
+    # Phase 7: Gateway codec unit tests (task 10)
+    add_executable(binary_gateway_codec_test tests/binary_gateway_codec_test.cpp)
+    target_link_libraries(binary_gateway_codec_test PRIVATE
+        GTest::gtest_main adapters_binary_protocol miniexchange_warnings)
+    gtest_discover_tests(binary_gateway_codec_test)
+
+    # Phase 7: Binary protocol E2E integration test (task 12)
+    add_executable(exchange_server_binary_e2e_test tests/exchange_server_binary_e2e_test.cpp)
+    target_link_libraries(exchange_server_binary_e2e_test PRIVATE
+        GTest::gtest_main engine adapters_tcp adapters_binary_protocol miniexchange_warnings)
+    gtest_discover_tests(exchange_server_binary_e2e_test)
 endif()
 
 # Tools libraries
@@ -295,3 +338,15 @@ add_executable(queue_benchmark
     apps/benchmark/latency_recorder.cpp)
 target_link_libraries(queue_benchmark PRIVATE
     workload_generator miniexchange_warnings)
+
+# Phase 7: Protocol benchmark (binary vs JSON encode/decode latency + payload size)
+# NOT registered with ctest; run manually.
+# Note: requires adapters_binary_protocol which is Linux-only (uses <endian.h>),
+# so this benchmark also only builds on Linux.
+if(UNIX AND NOT APPLE)
+    add_executable(protocol_benchmark
+        tools/protocol_benchmark/protocol_bench.cpp)
+    target_link_libraries(protocol_benchmark PRIVATE
+        benchmark::benchmark
+        adapters_binary_protocol json_codec miniexchange_warnings)
+endif()
