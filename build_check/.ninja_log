@@ -1,0 +1,9 @@
+# ninja log v7
+97	6419	8095667345323055	_deps/googletest-build/googletest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.obj	31842b1c71d25c60
+117	14853	8095667345526980	CMakeFiles/core_types_test.dir/tests/core_types_test.cpp.obj	7572a9cd692175a0
+82	62409	8095667345158978	_deps/googletest-build/googletest/CMakeFiles/gtest.dir/src/gtest-all.cc.obj	354b6a2ff9344c83
+62413	63298	8095667968487034	lib/libgtest.a	5e7c328868506031
+63298	63601	8095667977342561	lib/libgtest_main.a	2ef498cf96a6f023
+63601	65952	8095668003636566	core_types_test.exe	c09f2510ab895973
+63601	65952	8095668003636566	core_types_test_e3b0c442_tests.cmake	c09f2510ab895973
+63601	65952	8095668003636566	C:/Users/harsh/Desktop/MiniExchange/build_check/core_types_test_e3b0c442_tests.cmake	c09f2510ab895973

@@ -51,3 +51,12 @@ CTestTestfile.cmake
 perf.data
 perf.data.old
 *.prof
+
+# Stray build/benchmark artifacts (root level only)
+/*.log
+/*.txt
+!/CMakeLists.txt
+/buildmpowershell/
+/run_bench.bat
+/run_bench.ps1
+/test_output.txtmctest

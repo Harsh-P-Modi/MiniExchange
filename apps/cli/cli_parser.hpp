@@ -4,16 +4,14 @@
 #include <string>
 #include <variant>
 
+#include "core/EngineCommand.hpp"
 #include "core/NewOrder.hpp"
 #include "core/Types.hpp"
 
 namespace miniexchange::cli {
 
-// Parsed command types — the parser turns a raw text line into one of these.
-struct CancelRequest {
-    OrderId id;
-};
-
+// CLI-only commands — these never reach the engine and are handled
+// entirely within the CLI's main loop.
 struct PrintBookRequest {};
 
 struct QuitRequest {};
@@ -22,8 +20,11 @@ struct ParseError {
     std::string message;
 };
 
-// ParseResult — discriminated union of all possible parse outcomes.
-// The CLI main loop dispatches on which alternative is held.
+// ParseResult — discriminated union of all possible CLI parse outcomes.
+//
+// Engine-facing commands (LimitOrder, MarketOrder, CancelRequest) come
+// from the shared text_protocol parser; CLI-only commands (PrintBookRequest,
+// QuitRequest) are intercepted locally before delegation.
 using ParseResult = std::variant<LimitOrder, MarketOrder, CancelRequest,
                                  PrintBookRequest, QuitRequest, ParseError>;
 
@@ -38,6 +39,8 @@ using ParseResult = std::variant<LimitOrder, MarketOrder, CancelRequest,
 //   PRINT_BOOK
 //   QUIT
 //
+// Intercepts PRINT_BOOK and QUIT locally, delegates everything else to
+// adapters/text_protocol/text_protocol_parser.hpp's parse() function.
 // Returns a ParseResult variant. ParseError carries a human-readable
 // message for malformed input. No exceptions for bad input.
 class CLIParser {

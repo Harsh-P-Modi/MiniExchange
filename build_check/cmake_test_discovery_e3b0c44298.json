@@ -1,0 +1,93 @@
+{
+  "tests": 15,
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "CoreTypesTest",
+      "tests": 8,
+      "testsuite": [
+        {
+          "name": "NoImplicitConversion",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/core_types_test.cpp",
+          "line": 14
+        },
+        {
+          "name": "OrderIdConstruction",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/core_types_test.cpp",
+          "line": 35
+        },
+        {
+          "name": "PriceComparison",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/core_types_test.cpp",
+          "line": 45
+        },
+        {
+          "name": "QuantityArithmetic",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/core_types_test.cpp",
+          "line": 57
+        },
+        {
+          "name": "SequenceIncrement",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/core_types_test.cpp",
+          "line": 74
+        },
+        {
+          "name": "TradeSequenceIncrement",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/core_types_test.cpp",
+          "line": 84
+        },
+        {
+          "name": "SideEnum",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/core_types_test.cpp",
+          "line": 94
+        },
+        {
+          "name": "OrderIdHashable",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/core_types_test.cpp",
+          "line": 103
+        }
+      ]
+    },
+    {
+      "name": "ClientIdTest",
+      "tests": 7,
+      "testsuite": [
+        {
+          "name": "NoImplicitConstruction",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/core_types_test.cpp",
+          "line": 118
+        },
+        {
+          "name": "NoImplicitConversionToUint64",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/core_types_test.cpp",
+          "line": 124
+        },
+        {
+          "name": "EqualityAndInequality",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/core_types_test.cpp",
+          "line": 130
+        },
+        {
+          "name": "HashConsistency",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/core_types_test.cpp",
+          "line": 141
+        },
+        {
+          "name": "UsableAsUnorderedMapKey",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/core_types_test.cpp",
+          "line": 156
+        },
+        {
+          "name": "UsableInUnorderedSet",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/core_types_test.cpp",
+          "line": 168
+        },
+        {
+          "name": "DistinctFromOrderId",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/core_types_test.cpp",
+          "line": 180
+        }
+      ]
+    }
+  ]
+}

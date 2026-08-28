@@ -1,2 +1,0 @@
-ninja: Entering directory `c:\Users\harsh\Desktop\MiniExchange\build'
-ninja: no work to do.

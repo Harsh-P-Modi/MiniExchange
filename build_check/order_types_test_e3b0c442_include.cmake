@@ -1,0 +1,5 @@
+if(EXISTS "C:/Users/harsh/Desktop/MiniExchange/build_check/order_types_test_e3b0c442_tests.cmake")
+  include("C:/Users/harsh/Desktop/MiniExchange/build_check/order_types_test_e3b0c442_tests.cmake")
+else()
+  add_test(order_types_test_NOT_BUILT order_types_test_NOT_BUILT)
+endif()

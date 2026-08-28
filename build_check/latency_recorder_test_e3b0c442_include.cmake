@@ -1,0 +1,5 @@
+if(EXISTS "C:/Users/harsh/Desktop/MiniExchange/build_check/latency_recorder_test_e3b0c442_tests.cmake")
+  include("C:/Users/harsh/Desktop/MiniExchange/build_check/latency_recorder_test_e3b0c442_tests.cmake")
+else()
+  add_test(latency_recorder_test_NOT_BUILT latency_recorder_test_NOT_BUILT)
+endif()

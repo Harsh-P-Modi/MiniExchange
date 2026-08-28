@@ -1,0 +1,5 @@
+if(EXISTS "C:/Users/harsh/Desktop/MiniExchange/build_check/events_test_e3b0c442_tests.cmake")
+  include("C:/Users/harsh/Desktop/MiniExchange/build_check/events_test_e3b0c442_tests.cmake")
+else()
+  add_test(events_test_NOT_BUILT events_test_NOT_BUILT)
+endif()

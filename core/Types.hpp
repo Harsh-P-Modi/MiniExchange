@@ -26,6 +26,21 @@ struct OrderId {
     }
 };
 
+struct ClientId {
+    uint64_t value;
+
+    constexpr ClientId() : value(0) {}
+    explicit constexpr ClientId(uint64_t v) : value(v) {}
+
+    // Comparison operators for container usage (unordered_map, etc.)
+    constexpr bool operator==(const ClientId& other) const {
+        return value == other.value;
+    }
+    constexpr bool operator!=(const ClientId& other) const {
+        return value != other.value;
+    }
+};
+
 struct Price {
     int64_t value;  // signed — allows negative spread calculations later,
                     // though resting orders must have value > 0
@@ -160,6 +175,13 @@ namespace std {
 template <>
 struct hash<miniexchange::OrderId> {
     std::size_t operator()(const miniexchange::OrderId& id) const noexcept {
+        return std::hash<uint64_t>{}(id.value);
+    }
+};
+
+template <>
+struct hash<miniexchange::ClientId> {
+    std::size_t operator()(const miniexchange::ClientId& id) const noexcept {
         return std::hash<uint64_t>{}(id.value);
     }
 };

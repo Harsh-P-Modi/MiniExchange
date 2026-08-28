@@ -1,4 +1,0 @@
-﻿[1/4] Building CXX object CMakeFiles/workload_generator.dir/tools/workload_generator/workload_generator.cpp.obj
-[2/4] Linking CXX static library libworkload_generator.a
-[3/4] Building CXX object CMakeFiles/workload_generator_test.dir/tests/workload_generator_test.cpp.obj
-[4/4] Linking CXX executable workload_generator_test.exe

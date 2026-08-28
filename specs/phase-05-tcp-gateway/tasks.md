@@ -1,141 +1,92 @@
-# Phase 5 — Tasks: TCP Order Gateway
+# Implementation Plan
 
-Status: **APPROVED PLAN — execute one task at a time**
+## Overview
 
-**Execution rule (per `.kiro/steering/structure.md`): do exactly one
-task below, then stop and wait for explicit review/approval before
-starting the next one.** Update `docs/LEARNING.md` as part of each
-task's own review, per `.kiro/steering/learning-doc.md`.
+TCP order gateway for MiniExchange: extract a reusable text protocol adapter, build an epoll-based TCP server with length-prefix framing, wire inbound/outbound SPSC queues between network and engine threads, compose into an `exchange_server` app, benchmark round-trip latency, and clean up prior-phase documentation debt.
 
----
+## Tasks
 
-## Task 1 — Extract `adapters/text_protocol/`, refactor `apps/cli/` onto it
+- [x] 1. Prior-phase backlog cleanup (prerequisite)
+  - [x] 1.1. Write ADR-003 (single-threaded-per-symbol), ADR-004 (Ports & Adapters), ADR-005 (client-supplied lifetime-unique Order IDs)
+  - [x] 1.2. Add a standalone LEARNING.md entry for Phase 1 Task 5 (`core/Events.hpp`)
+  - [x] 1.3. Add the Phase 1 traceability table (requirement ID → test name)
+  - [x] 1.4. Add stray artifacts to `.gitignore`; remove ~25 stray root-level artifacts from tracking
+  - [x] 1.5. Update `.github/workflows/ci.yml` clang-tidy `find` command to include `lockfree_queue/` and `tools/`
+  - [x] 1.6. Verify acceptance criteria: `docs/adr/` contains ADR-001 through ADR-005; LEARNING.md has entry for every Phase 1 task; repo root has no stray build artifacts; CI clang-tidy covers all source dirs
+- [x] 2. Extract `adapters/text_protocol/`, refactor `apps/cli/` onto it
+  - [x] 2.1. Create `adapters/text_protocol/` with `parse()` returning only engine-facing commands
+  - [x] 2.2. Add `render(const EngineResponse&) -> std::string`
+  - [x] 2.3. Refactor `apps/cli/`: intercept PRINT_BOOK/QUIT locally, delegate to shared parser
+  - [x] 2.4. Verify all Phase 1 CLI tests still pass after refactor
+- [x] 3. Add `ClientId` to `core/Types.hpp`
+  - [x] 3.1. Implement strong wrapper `struct ClientId` with explicit ctor, ==, !=, std::hash
+  - [x] 3.2. Unit tests: cannot implicitly construct/convert, equality/hash behave
+- [x] 4. TCP server skeleton: listener, epoll loop, connections
+  - [x] 4.1. Create `adapters/tcp/` library with TcpServer and configurable port
+  - [x] 4.2. Listener socket, accept4(SOCK_NONBLOCK), TCP_NODELAY, ClientId per connection
+  - [x] 4.3. epoll edge-triggered, nonblocking fds; accept loop drains until EAGAIN
+  - [x] 4.4. Read path: loop-read until EAGAIN, buffer partial frames, length-prefix framing (4-byte BE + payload)
+  - [x] 4.5. Write path: per-connection write buffer, flush loops, EPOLLOUT armed only when data pending
+  - [x] 4.6. Connection teardown on EPOLLHUP/EPOLLERR/EOF
+  - [x] 4.7. Integration tests for framing, multiple clients, edge-triggered drain, slow-reader
+- [x] 5. Wire queues: TaggedCommand / TaggedResponse
+  - [x] 5.1. Define TaggedCommand and TaggedResponse structs with ClientId
+  - [x] 5.2. Inbound: SpscRingBuffer<TaggedCommand, N>; parse → push
+  - [x] 5.3. Outbound: SpscRingBuffer<TaggedResponse, 65536>; engine spin-retries on full (R8)
+  - [x] 5.4. ParseError → direct in-band text error response, no engine round-trip
+  - [x] 5.5. Response routing: ClientId → connection lookup; disconnected client's response dropped
+  - [x] 5.6. Integration test: multiple clients → engine → correct per-client responses; cross-talk test
+- [x] 6. `apps/exchange_server/` + eventfd wakeup + engine-thread integration
+  - [x] 6.1. Create apps/exchange_server/main.cpp composition root
+  - [x] 6.2. eventfd registered edge-triggered in epoll; one write per outbound push; drain to exhaustion
+  - [x] 6.3. Engine thread loop: spin on inbound, process, push response, notify
+  - [x] 6.4. Shutdown: SIGINT/SIGTERM → atomic flag + eventfd write → clean join
+  - [x] 6.5. Integration test: full round trip through real sockets for LIMIT/MARKET/CANCEL
+  - [x] 6.6. Unit test for R8 spin path with deliberately small queue
+- [x] 7. Benchmark
+  - [x] 7.1. Round-trip latency harness: client → parse → engine → serialize → client
+  - [x] 7.2. Record with/without taskset pinning; record tooling used
+  - [x] 7.3. Append results to `benchmarks/results/`
+- [x] 8. ADR (ClientId)
+  - [x] 8.1. Write ADR-006-client-id.md
+  - [x] 8.2. Include queue-sizing and R8 back-pressure rationale
+  - [x] 8.3. Verify docs/adr/ numbering is contiguous 001–006
+- [x] 9. Definition-of-Done sweep
+  - [x] 9.1. Verify apps/cli/ refactor leaves no duplicated grammar logic
+  - [x] 9.2. All tests green; benchmark recorded; ADR numbering matches
+  - [x] 9.3. Task 1 acceptance criteria still hold at phase close
+  - [x] 9.4. .kiro/steering/structure.md conventions respected
+  - [x] 9.5. apps/exchange_server/ exists as a buildable CMake target
 
-Move `CLIParser`/`ConsolePrinter`'s logic into
-`adapters/text_protocol/TextProtocolParser.hpp` /
-`TextProtocolRenderer.hpp` per `design.md` §2. Refactor `apps/cli/` to
-depend on this library instead of owning the grammar directly.
+## Task Dependency Graph
 
-**Acceptance criteria:** **every existing Phase 1 CLI test/manual smoke
-test still passes unchanged in behavior** — this extraction must be
-invisible from the CLI's perspective, same "prove the swap is
-invisible" bar as Phase 3's pool swap and Phase 4's `WorkloadEvent`
-alias. If any CLI-visible behavior changes, stop and discuss before
-continuing.
+```json
+{
+  "waves": [
+    { "tasks": [1] },
+    { "tasks": [2, 3] },
+    { "tasks": [4] },
+    { "tasks": [5] },
+    { "tasks": [6] },
+    { "tasks": [7, 8] },
+    { "tasks": [9] }
+  ],
+  "dependencies": {
+    "2": [1],
+    "3": [1],
+    "4": [3],
+    "5": [3, 4],
+    "6": [5],
+    "7": [6],
+    "8": [1, 6],
+    "9": [1, 2, 3, 4, 5, 6, 7, 8]
+  }
+}
+```
 
-**Implements:** `requirements.md` §6 (improvement); `design.md` §2.
+## Notes
 
----
-
-## Task 2 — `core/Types.hpp` addition (`ClientId`) and `core/TaggedCommand.hpp`
-
-Add `ClientId` to `core/Types.hpp`; create `TaggedCommand`/
-`TaggedResponse` per `design.md` §3.
-
-**Acceptance criteria:** headers compile; trivial construction/field-
-access tests, same bar as Phase 1's Task 2/3 for new small types.
-
-**Implements:** `requirements.md` §5 item 3 (resolved); `design.md` §3.
-
----
-
-## Task 3 — `adapters/tcp/TcpServer.hpp`: accept + framing, no engine wiring yet
-
-Implement epoll accept loop, `TCP_NODELAY`, length-prefixed framing
-with the max-frame-size disconnect behavior, per `design.md` §5. At
-this task's scope, parsed frames just get logged/discarded — no queue
-wiring yet (that's Task 4), so this task can be tested purely as
-"accepts connections, correctly frames/unframes bytes, disconnects on
-oversized frames."
-
-**Acceptance criteria (integration test using a real socket client):**
-- Multiple concurrent connections accepted and handled independently.
-- A message split across multiple TCP packets/reads is correctly
-  reassembled before being treated as a complete frame.
-- Multiple complete frames arriving in one read are each processed
-  (pipelining case).
-- An oversized length prefix causes that connection to be disconnected
-  without affecting other connected clients (NFR2).
-
-**Implements:** `requirements.md` R1, R2, R4; `design.md` §5 (partial).
-
----
-
-## Task 4 — Wire `TcpServer` to the two queues + `eventfd` wakeup
-
-Connect parsed frames to `TextProtocolParser` → `TaggedCommand` →
-inbound queue (R5); register the outbound queue's `eventfd` in the same
-epoll set; on wakeup, drain the outbound `TaggedResponse` queue and
-write framed, rendered responses back to the correct client by
-`ClientId` (R6, corrected).
-
-**Acceptance criteria:** a synthetic test double stands in for the
-engine thread (pops from inbound, pushes a canned `TaggedResponse` onto
-outbound) — confirms the TCP thread correctly routes that canned
-response back to the exact client that sent the originating command,
-even with multiple clients connected simultaneously.
-
-**Implements:** `requirements.md` R5, R6 (corrected); `design.md` §4, §5.
-
----
-
-## Task 5 — `apps/exchange_server/`
-
-Wire a real `MatchingEngine` on its own thread to the `TcpServer` from
-Tasks 3–4, per `design.md` §6.
-
-**Acceptance criteria:** end-to-end test using a real socket client —
-submit an order over TCP, receive the correct response over the same
-connection; two simultaneous clients each get their own correctly
-routed responses and don't see each other's.
-
-**Implements:** `requirements.md` §4 Definition of Done, item 1;
-`design.md` §6.
-
----
-
-## Task 6 — Round-trip latency benchmark (R7)
-
-Measure client-send → parse → engine-match → serialize → client-
-receive, end to end, using Phase 2's `LatencyRecorder` pattern.
-
-**Acceptance criteria:** `benchmarks/results/phase-05-tcp-roundtrip.md`
-produced; write-up explicitly separates "engine-internal" time (already
-known from Phase 2/3's baselines) from "everything TCP adds on top" —
-the point of this specific benchmark is isolating the network/framing
-overhead, not re-measuring the engine.
-
-**Implements:** `requirements.md` R7.
-
----
-
-## Task 7 — ADR for `ClientId`
-
-Write `docs/adr/ADR-006-client-id.md` per the Charter's documentation
-discipline, since `requirements.md` §4 explicitly calls out this
-decision as needing its own ADR (this is the first phase to require a
-new ADR beyond Phase 1's original five).
-
-**Acceptance criteria:** ADR exists, follows the established
-Context/Decision/Alternatives/Consequences shape.
-
-**Implements:** `requirements.md` §4 Definition of Done, item 3.
-
----
-
-## Task 8 — Definition of Done audit
-
-Confirm every item in `requirements.md` §4 is met. Confirm
-`docs/LEARNING.md` covers the `TaggedCommand`/`TaggedResponse`
-two-queue design and the `eventfd` wakeup mechanism in real depth —
-both are genuinely non-obvious systems-engineering decisions worth
-being able to explain from scratch.
-
-**Acceptance criteria:** Phase 5's Definition of Done fully met.
-
----
-
-Once Task 8 is signed off, Phase 6 (UDP market data feed) can begin —
-it will implement `EventSink` directly against the same live engine,
-proving that port's separation from the `TaggedResponse` mechanism
-built in this phase.
+- Task 1 maps to the "prior-phase backlog cleanup" that unblocks clean ADR numbering and documentation completeness for subsequent phases.
+- Task 4 depends on Task 3 (needs ClientId for per-connection identification).
+- Task 5 depends on the Phase 4 lock-free SPSC ring buffer being available and stable.
+- The R8 requirement (engine spin-retries when outbound queue is full) is tested explicitly in Task 6.6 with a deliberately undersized queue.

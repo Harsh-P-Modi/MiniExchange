@@ -1,9 +1,9 @@
 # Phase 5 — Requirements: TCP Order Gateway
 
 Status: **APPROVED** — all Open Questions resolved below (including
-post-review additions on parser command ownership, outbound
-back-pressure, and ClientId typing) — `design.md` and `tasks.md` are
-built on this version.
+post-review additions parser command ownership, outbound
+back-pressure, ClientId typing, and prior-phase documentation backlog)
+— `design.md` and `tasks.md` are built on this version.
 
 ## 1. Scope
 
@@ -80,16 +80,20 @@ it under a different phase's spec.
 
 ## 4. Definition of Done
 
+- Prior-phase documentation backlog cleared (Task 0): ADR-001 through
+  ADR-005 exist in `docs/adr/`; LEARNING.md has an entry for every
+  Phase 1 task (1–17), including the standalone Phase 1 Task 5 entry
+  and the R-number→test-name traceability table; repo root carries no
+  stray build/log artifacts; CI's clang-tidy scan covers all project
+  source directories (`lockfree_queue/` and `tools/` included).
 - Multiple concurrent clients can submit orders and receive correct,
   individually-routed responses.
 - Round-trip latency benchmarked and recorded (with thread-pinning /
   tooling notes per R7).
 - `ClientId` design decision made explicitly and documented, given the
   Phase 8 dependency flagged above (see §5.3).
-- New ADR for Phase 5 verified against the existing `docs/adr/`
-  backlog: either earlier pending ADRs are completed first or Phase 5's
-  ADR number matches the actual repository state — no gap between the
-  plan and `docs/adr/`.
+- Phase 5's ADR number matches the actual `docs/adr/` state — no gap
+  between the plan and the repository.
 
 ## 5. Open Questions — Resolved
 
@@ -158,7 +162,41 @@ doesn't have to:
   correctness-first phase; revisit (fixed-capacity inline storage) in
   the binary-protocol phase.
 
-## 7. Improvement — extracting the shared plaintext-grammar parser
+## 7. Prior-Phase Backlog (Resolved Alongside Phase 5)
+
+A repo audit surfaced documentation/hygiene debt from Phases 1–4 that
+is functionally invisible but would be noticed in a careful review.
+Rather than let it accumulate, Phase 5 clears it as a bounded,
+explicit prerequisite (Task 0 in `tasks.md`) — not as implicit debt
+that the ADR task partially catches:
+
+1. **Missing ADRs (Phase 1 Task 15 incomplete):** only ADR-001 and
+   ADR-002 exist; ADR-003 (single-threaded-per-symbol), ADR-004
+   (Ports & Adapters), and ADR-005 (client-supplied lifetime-unique
+   Order IDs) were planned but never written.
+2. **Missing LEARNING.md entry for Phase 1 Task 5** (`core/Events.hpp`:
+   `EngineResult`, `EngineResponse`, `OrderAccepted`,
+   `OrderCancelled`) — per `learning-doc.md`'s "never skip a module
+   because it seems simple" rule, it needs its own entry covering why
+   these types are separate from `Trade`, why `EngineResponse` bundles
+   `vector<Trade>` rather than a count, and why `EngineResult` is an
+   enum-class rather than error codes.
+3. **Missing Phase 1 traceability table** (Task 17's acceptance
+   criteria: requirement ID → test name). Phases 3 and 4 have explicit
+   tables; Phase 1 does not.
+4. **Stray build/log artifacts at the repo root** (~25 files:
+   `bench_*.txt`, `build_*.log`, `cmake_output.log`, `test_*.log`,
+   `run_bench.bat`/`.ps1`, `buildmpowershell/`, etc.) plus `.gitignore`
+   gaps that let them accumulate.
+5. **CI clang-tidy scan gaps:** the `find` command in
+   `.github/workflows/ci.yml` omits `lockfree_queue/` (Phase 4) and
+   `tools/` (Phase 2). Going forward, each phase that adds a source
+   directory updates the scan — a convention, not a one-off fix.
+
+All are documentation/hygiene items; no functional code changes are
+required by this section.
+
+## 8. Improvement — extracting the shared plaintext-grammar parser
 
 Phase 1's `CLIParser`/`ConsolePrinter` live entirely inside
 `apps/cli/`, per the rule in `.kiro/steering/structure.md`: "extract to

@@ -46,6 +46,7 @@ jobs:
       - name: Run clang-tidy
         run: |
           find core/ orderbook/ engine/ interfaces/ apps/ tests/ \
+            lockfree_queue/ tools/ adapters/ \
             -name '*.cpp' -o -name '*.hpp' | \
             xargs clang-tidy -p build --quiet 2>&1 || true
 
@@ -65,4 +66,6 @@ jobs:
           cppcheck --enable=all --suppress=missingIncludeSystem \
             --error-exitcode=1 \
             -I core/ -I orderbook/ -I engine/ -I interfaces/ -I apps/ \
-            core/ orderbook/ engine/ interfaces/ apps/ tests/ 2>&1 || true
+            -I lockfree_queue/ -I tools/ -I adapters/ \
+            core/ orderbook/ engine/ interfaces/ apps/ tests/ \
+            lockfree_queue/ tools/ adapters/ 2>&1 || true

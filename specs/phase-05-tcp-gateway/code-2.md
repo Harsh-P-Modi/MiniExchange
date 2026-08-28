@@ -158,7 +158,37 @@ beyond the payload itself.
   indefinitely on push under normal load (R8). Spin-retry on full is
   retained as the last-resort back-pressure, documented in the ADR.
 
-## 7. Judgment calls (documented, revisitable)
+## 7. `apps/exchange_server/` (new composition root)
+
+A new executable — the first multi-threaded, network-facing app. Not
+folded into `apps/cli/` or `apps/benchmark/` (different shape from
+either):
+
+```cpp
+// apps/exchange_server/main.cpp (sketch)
+main():
+    construct MatchingEngine (with NullEventSink or a future Phase 6 sink)
+    construct SpscRingBuffer<TaggedCommand, 4096>   inbound
+    construct SpscRingBuffer<TaggedResponse, 65536>  outbound
+    create eventfd
+    construct TcpServer (given inbound queue ref, outbound queue ref,
+                          eventfd fd, text_protocol parser/renderer)
+    install SIGINT/SIGTERM handler → sets atomic shutdown flag,
+                                     writes 1 to eventfd
+    spawn I/O thread running TcpServer::run() (epoll loop)
+    engine thread (main thread):
+        loop:
+            if shutdown flag set → break
+            TaggedCommand cmd;
+            if inbound.try_pop(cmd):
+                EngineResponse resp = std::visit(dispatch to engine)
+                TaggedResponse tagged{cmd.client, std::move(resp)}
+                while (!outbound.try_push(std::move(tagged))) {}  // R8 spin
+                write(eventfd, 1)  // notify I/O thread
+    join I/O thread
+
+
+## 8. Judgment calls (documented, revisitable)
 
 1. **Single epoll instance for listener + clients + eventfd** — one
    loop, one code path. A separate wakefd per direction is overkill
@@ -177,7 +207,7 @@ beyond the payload itself.
    the alternative (100ms poll timeout) was rejected as a wasteful
    fixed-interval wakeup on a latency-focused project.
 
-## 8. Why epoll + edge-triggered + two SPSC queues — not the alternatives
+## 9. Why epoll + edge-triggered + two SPSC queues — not the alternatives
 
 - **Why not `io_uring`?** Lower syscall overhead in theory, but
   significantly more complex submission/completion ring setup, and

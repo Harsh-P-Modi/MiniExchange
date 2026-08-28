@@ -115,6 +115,43 @@ add_executable(pool_exhaustion_test tests/pool_exhaustion_test.cpp)
 target_link_libraries(pool_exhaustion_test PRIVATE GTest::gtest_main engine miniexchange_warnings)
 gtest_discover_tests(pool_exhaustion_test)
 
+# Shared text protocol library (extracted from apps/cli/ for reuse by adapters/tcp/)
+add_library(text_protocol
+    adapters/text_protocol/text_protocol_parser.cpp
+    adapters/text_protocol/text_protocol_renderer.cpp)
+target_link_libraries(text_protocol PRIVATE miniexchange_warnings)
+
+# TCP adapter library (Linux only — epoll-based, nonblocking)
+if(UNIX AND NOT APPLE)
+    add_library(adapters_tcp
+        adapters/tcp/tcp_server.cpp)
+    target_link_libraries(adapters_tcp PRIVATE miniexchange_warnings)
+
+    # TCP server integration tests (requires real sockets + epoll)
+    add_executable(tcp_server_test tests/tcp_server_test.cpp)
+    target_link_libraries(tcp_server_test PRIVATE
+        GTest::gtest_main adapters_tcp miniexchange_warnings)
+    gtest_discover_tests(tcp_server_test)
+
+    # Exchange server app — multi-threaded TCP composition root (Phase 5)
+    add_executable(exchange_server apps/exchange_server/main.cpp)
+    target_link_libraries(exchange_server PRIVATE
+        engine adapters_tcp text_protocol miniexchange_warnings)
+
+    # Exchange server E2E integration test (full round-trip through real sockets)
+    add_executable(exchange_server_e2e_test tests/exchange_server_e2e_test.cpp)
+    target_link_libraries(exchange_server_e2e_test PRIVATE
+        GTest::gtest_main engine adapters_tcp text_protocol miniexchange_warnings)
+    gtest_discover_tests(exchange_server_e2e_test)
+
+    # Phase 5: TCP round-trip latency benchmark (NOT registered with ctest; run manually)
+    add_executable(tcp_roundtrip_bench
+        apps/benchmark/tcp_roundtrip_bench.cpp
+        apps/benchmark/latency_recorder.cpp)
+    target_link_libraries(tcp_roundtrip_bench PRIVATE
+        engine adapters_tcp text_protocol miniexchange_warnings)
+endif()
+
 # Tools libraries
 add_library(workload_generator tools/workload_generator/workload_generator.cpp)
 target_link_libraries(workload_generator PRIVATE miniexchange_warnings)
@@ -130,7 +167,7 @@ add_executable(mini_exchange
     apps/cli/main.cpp
     apps/cli/cli_parser.cpp
     apps/cli/console_printer.cpp)
-target_link_libraries(mini_exchange PRIVATE engine miniexchange_warnings)
+target_link_libraries(mini_exchange PRIVATE engine text_protocol miniexchange_warnings)
 
 # Latency recorder test (Phase 2, Task 3) — latency_recorder.cpp is app-local,
 # compiled directly into the test executable rather than a shared library.
@@ -155,6 +192,23 @@ gtest_discover_tests(spsc_ring_buffer_test)
 add_executable(spsc_stress_test tests/spsc_stress_test.cpp)
 target_link_libraries(spsc_stress_test PRIVATE GTest::gtest_main miniexchange_warnings)
 gtest_discover_tests(spsc_stress_test)
+
+# Phase 5: Inbound queue integration test (framing, parse→push, compile verification)
+add_executable(inbound_queue_test tests/inbound_queue_test.cpp)
+target_link_libraries(inbound_queue_test PRIVATE
+    GTest::gtest_main text_protocol miniexchange_warnings)
+gtest_discover_tests(inbound_queue_test)
+
+# Phase 5: Response routing integration test (multiple clients → engine → per-client responses)
+add_executable(response_routing_test tests/response_routing_test.cpp)
+target_link_libraries(response_routing_test PRIVATE
+    GTest::gtest_main engine text_protocol miniexchange_warnings)
+gtest_discover_tests(response_routing_test)
+
+# Phase 5: R8 spin-retry path test (outbound queue full → spin until space freed)
+add_executable(r8_spin_test tests/r8_spin_test.cpp)
+target_link_libraries(r8_spin_test PRIVATE GTest::gtest_main miniexchange_warnings)
+gtest_discover_tests(r8_spin_test)
 
 # Benchmark harness (Phase 2) — NOT registered with ctest; run manually.
 add_executable(benchmark_harness

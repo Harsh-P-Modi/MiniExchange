@@ -1,0 +1,5 @@
+if(EXISTS "C:/Users/harsh/Desktop/MiniExchange/build_check/integration_test_e3b0c442_tests.cmake")
+  include("C:/Users/harsh/Desktop/MiniExchange/build_check/integration_test_e3b0c442_tests.cmake")
+else()
+  add_test(integration_test_NOT_BUILT integration_test_NOT_BUILT)
+endif()

@@ -1,0 +1,5 @@
+if(EXISTS "C:/Users/harsh/Desktop/MiniExchange/build_check/interfaces_test_e3b0c442_tests.cmake")
+  include("C:/Users/harsh/Desktop/MiniExchange/build_check/interfaces_test_e3b0c442_tests.cmake")
+else()
+  add_test(interfaces_test_NOT_BUILT interfaces_test_NOT_BUILT)
+endif()

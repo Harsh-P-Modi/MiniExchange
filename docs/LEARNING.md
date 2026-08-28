@@ -633,6 +633,119 @@ If someone accidentally adds `Price price;` to `MarketOrder`, this static_assert
 5. **Why are `NewOrder` (input) and `Order` (resting) separate types instead of one `Order` type used for both?** What field exists in `Order` but not in `LimitOrder`, and why does that difference matter?
 
 
+### Task 5 — `core/Events.hpp`: Engine Response Types and Event Payloads
+
+**What it does:**
+
+Defines the four types that represent "what happened" after the engine processes a request. These are the last pieces of the core type system — Task 2 gave us the primitives (`OrderId`, `Price`, etc.), Task 3 gave us `Trade` (what happens when orders match), Task 4 gave us `Order`/`NewOrder` (what rests and what's submitted). Task 5 fills the remaining gap: how does the engine *communicate results* back to callers and observers?
+
+The four types:
+
+1. **`EngineResult`** — an enum class with five values (`Accepted`, `DuplicateOrderId`, `UnknownOrderId`, `InvalidQuantity`, `InvalidPrice`, plus `PoolExhausted` added in Phase 3). This is the status code: a compact "what category of outcome did your request produce?"
+
+2. **`EngineResponse`** — a struct bundling `EngineResult status`, `std::vector<Trade> trades`, and `Quantity remaining_qty`. This is the synchronous return value from `EngineAPI::submit()` and `EngineAPI::cancel()`. It answers "what happened to *my* order?" in one shot: the status says accepted/rejected, the trades say what filled, and remaining_qty says what's left.
+
+3. **`OrderAccepted`** — the payload for `EventSink::on_order_accepted`. Contains `OrderId`, `Side`, and the original submitted `Quantity`. This is emitted once per accepted order (limit or market), regardless of whether it fills immediately.
+
+4. **`OrderCancelled`** — the payload for `EventSink::on_order_cancelled`. Contains `OrderId` and the `remaining_qty` at cancellation time. Emitted once when a resting order is successfully removed.
+
+Note that `Trade` (from Task 3) doubles as the `EventSink::on_trade` payload. There's no separate "TradeEvent" type — one canonical representation used everywhere.
+
+**Exact location:**
+
+`core/Events.hpp` — entire file (lines 1–96). The enum `EngineResult` at lines 16–27, `EngineResponse` struct at lines 47–57, `OrderAccepted` at lines 63–68, `OrderCancelled` at lines 75–84.
+
+Tests: `tests/test_events.cpp` — 6 test cases covering construction, field access, enum distinctness, empty-trades (rejection) path, and multi-trade responses.
+
+**Why these data structures, specifically:**
+
+*Why `EngineResult` is an enum class, not integer error codes or exceptions:*
+
+The engine's contract (requirements.md §4, steering/tech.md) says "the engine returns structured results, never throws for expected business outcomes." A duplicate OrderId is not a programming error — it's a client sending a bad request. Using exceptions for this would mean callers need try/catch blocks for normal control flow, which is both semantically wrong (exceptions should signal *unexpected* failures) and a performance hazard on the hot path (exception unwinding is orders of magnitude slower than returning a value). Integer error codes (`0 = success, -1 = duplicate, ...`) would work mechanically but sacrifice type safety — nothing stops you from comparing an error code to a random integer or forgetting to handle a case. An enum class with `switch` and `-Wswitch` gives compile-time exhaustiveness: if a new result variant is added, every `switch` on `EngineResult` that doesn't handle it produces a compiler warning.
+
+*Why `EngineResponse` bundles `vector<Trade>` rather than just a count:*
+
+A caller submitting an aggressive limit order needs to know *which* resting orders it traded against and at what prices — not just "you filled 50 shares." The CLI uses this to print "FILLED 10@10020, FILLED 20@10015, RESTING 20@10010". A future FIX adapter will need individual fill reports (execution reports, one per counterparty). Returning only a count would force callers to reconstruct the fills from the EventSink stream — which is the wrong abstraction direction (EventSink is for third-party observers, EngineResponse is for the submitter). The `vector<Trade>` makes this zero-reconstruction: every fill is right there in the response.
+
+*Why `OrderAccepted` and `OrderCancelled` are separate structs from `Trade`:*
+
+They represent fundamentally different state transitions. A `Trade` means "quantity moved from one order to another at a price." An `OrderAccepted` means "the engine took ownership of this OrderId." An `OrderCancelled` means "a resting order was removed without trading." They carry different fields (`OrderAccepted` has `side` and `quantity` but no price; `OrderCancelled` has `remaining_qty`; `Trade` has both buy/sell IDs, price, and quantity). Collapsing them into a single "Event" discriminated union would add runtime branching in every EventSink implementor and obscure the type-level guarantee of what fields are available.
+
+**Why this architecture/pattern:**
+
+These types live in `core/` because they're domain primitives — pure data with no logic, no dependencies on other MiniExchange modules. They define the *shape* of the engine's communication contract without containing any communication logic themselves.
+
+The key architectural decision is having **two output channels** rather than one:
+
+- **`EngineResponse`** (synchronous, per-caller): returned directly from `submit()`/`cancel()`. The caller doesn't need to register anywhere or correlate events — they get immediate, structured feedback. This is the "what happened to *my* request" channel.
+
+- **`EventSink`** callbacks using `OrderAccepted`/`OrderCancelled`/`Trade` (broadcast, per-observer): called by the engine for every state change regardless of who triggered it. This is the "what happened to *anything*" channel — used by market-data feeds (Phase 6), benchmark counters, logging adapters, and replay systems.
+
+Why not collapse them? If only `EngineResponse` existed, a market-data adapter would need to somehow intercept every `submit()` call's return value — which it can't, because it doesn't know when or from where `submit()` is called. If only `EventSink` existed, a CLI submitting one order would need to register as a listener, submit, then search through all events to find the one matching its OrderId — fragile and unnecessary.
+
+**Complexity (time and space):**
+
+- **Space**: `EngineResult` is a single byte (enum class). `EngineResponse` is fixed-size metadata (status + remaining_qty = ~16 bytes) plus a heap-allocated `vector<Trade>`. Each `Trade` is 40 bytes (5 × 8-byte fields). In practice, most responses contain 0–3 trades. `OrderAccepted` is 24 bytes, `OrderCancelled` is 16 bytes.
+
+- **Time**: Constructing/returning these types is O(1) for rejection cases (empty vector, no trades). For accepted orders that match, construction is O(k) where k = number of fills — but this is inherently linear in the number of trades produced, and the engine is already doing O(k) work to execute those trades, so the response construction adds no asymptotic overhead.
+
+- The `vector<Trade>` inside `EngineResponse` does perform a heap allocation on the fill path. This is accepted in Phase 1 (correctness-first); Phase 3's memory pool doesn't target this allocation since it's per-submit (not per-order-resting-lifetime). If profiling later shows this allocation matters, a small-buffer-optimized vector (SBO) or a fixed-capacity stack array could replace it — but not before a benchmark proves it's worth the complexity.
+
+**Benefits:**
+
+1. **Type safety**: `EngineResult` as enum class means the compiler catches missing cases. Strong-typed payloads (`OrderAccepted` vs `OrderCancelled` vs `Trade`) mean EventSink implementors get compile-time guarantees about what fields exist.
+
+2. **Self-documenting API**: A function returning `EngineResponse` makes its full contract visible in the signature — status, fills, and remaining quantity are all right there. No need to check side channels or parse logs.
+
+3. **Minimal coupling**: `core/Events.hpp` depends only on `core/Trade.hpp` and `core/Types.hpp` — all within the same layer. No upward dependencies, no I/O, no business logic.
+
+4. **Two-channel separation**: Callers get immediate feedback without registration overhead. Observers get comprehensive visibility without intercepting return values. Each channel is simple; neither is overloaded.
+
+5. **No-exception contract**: Expected outcomes (`DuplicateOrderId`, `UnknownOrderId`, etc.) are values, not exceptions. The hot path never unwinds a stack.
+
+**Drawbacks / tradeoffs accepted:**
+
+1. **`vector<Trade>` heap allocation**: Every `EngineResponse` with trades allocates on the heap. This is acceptable in Phase 1 (correctness-first) and not addressed until a benchmark shows it matters. The allocation is per-submit, not per-resting-order, so it's less hot than the order pool itself.
+
+2. **Redundant information between channels**: When the engine matches, it puts the same `Trade` objects both in `EngineResponse.trades` AND calls `EventSink::on_trade`. This is deliberate duplication — the two channels serve different audiences — but it means the engine does construct the same data twice (once to push into the vector, once to pass by reference to EventSink). The overhead is negligible (a few field copies) but it's there.
+
+3. **Growing enum**: Adding a new rejection reason (like `PoolExhausted` in Phase 3) requires touching `EngineResult` and every `switch` that handles it. This is actually a benefit in disguise — `-Wswitch` forces every handler to consider the new case — but it does mean cross-cutting changes when adding rejection reasons.
+
+4. **No timestamp in event payloads**: `OrderAccepted` and `OrderCancelled` carry no time information. The engine uses monotonic `Sequence` for ordering, not wall-clock time (per tech.md). If an observer needs to know *when* something happened, it must timestamp at the EventSink boundary — the engine doesn't help. This keeps the engine clock-free but pushes timing responsibility outward.
+
+**Alternatives considered and rejected:**
+
+1. **Single "Event" variant (`std::variant<OrderAccepted, OrderCancelled, Trade>`)**: Would unify the EventSink into a single `on_event(const Event&)` method. Rejected because it forces runtime dispatch (`std::visit`) at every observer, obscures the type-level guarantees, and makes it easier to accidentally ignore an event type without compiler help. Three focused virtual methods are clearer and give `-Woverride` protection.
+
+2. **`std::optional<Trade>` instead of `vector<Trade>` in EngineResponse**: Would work only if a single submit could produce at most one trade. But a single aggressive limit order can cross multiple price levels, producing multiple trades (e.g., buy at 105 crosses resting sells at 100, 101, 102). A vector is the natural container.
+
+3. **Returning `std::expected<EngineResponse, EngineResult>` (C++23)**: Would separate the success path (response with trades) from the error path (rejection reason). Attractive in theory, but: (a) `std::expected` requires C++23 which we're not targeting (C++20 locked); (b) even a "successful" response might have zero trades (a limit order that doesn't cross anything is accepted with empty trades); (c) the current flat struct is simpler — one type to understand, not a nested wrapper.
+
+4. **Exception-based error reporting**: Throwing `DuplicateOrderIdException`, `InvalidQuantityException`, etc. Rejected per tech.md's hard rule: "the engine returns structured results, never throws for expected business outcomes." Exceptions also have measurable performance cost on the throw path (stack unwinding), which matters on a latency-sensitive path even if it's the "error" path — a production gateway might see bursts of duplicate IDs during reconnection storms.
+
+5. **Collapse EngineResponse and EventSink into one mechanism** (either return-only or callback-only): Discussed in the architecture section above. Both pure approaches force one audience (submitter or observer) into an awkward usage pattern. Two simple channels beats one overloaded channel.
+
+**How this connects to what came before:**
+
+- Task 2 defined `OrderId`, `Price`, `Quantity`, `Side`, `Sequence` — the leaf types that `EngineResponse`, `OrderAccepted`, and `OrderCancelled` compose.
+- Task 3 defined `Trade` — which is directly embedded in `EngineResponse.trades` and reused as the `EventSink::on_trade` payload (no second "trade event" type).
+- Task 4 defined `Order` (resting in the book) and `NewOrder` (submitted by clients) — the inputs that produce these outputs. `EngineResponse` is what you get back when you submit a `NewOrder`.
+- Task 5 completes the core type system. After this, `interfaces/` (Task 6) can declare `EngineAPI::submit() -> EngineResponse` and `EventSink::on_order_accepted(const OrderAccepted&)` — those port declarations depend on the types defined here.
+- `PoolExhausted` was added to `EngineResult` in Phase 3 when the memory pool could reject orders for capacity reasons — demonstrating the enum's designed extensibility.
+
+**Check your understanding:**
+
+1. **Why does `EngineResponse` carry a `vector<Trade>` rather than a single `Trade` or a count?** Construct a concrete scenario where a single `submit()` call produces three trades at three different prices.
+
+2. **The engine calls `EventSink::on_trade(trade)` AND puts the same trade in `EngineResponse.trades`. Why is this deliberate redundancy, not a bug?** Who uses each channel, and what would break if you removed one?
+
+3. **`EngineResult::InvalidPrice` can never be returned for a `MarketOrder`. Why not? Where is this enforced — at the type level, at runtime validation, or both?** (Hint: look at `NewOrder`'s variant shape from Task 4.)
+
+4. **If you added a new rejection reason (say, `SelfTradePrevention` for Phase 8), what would `-Wswitch` do for you? What would it NOT catch?** Think about places that check `EngineResult` with if/else chains vs. switch statements.
+
+5. **Why does `OrderAccepted` carry `quantity` (the original submitted quantity) but NOT `price`?** What would go wrong if it carried `price` — consider that market orders have no price.
+
+
 ### Task 6 — `interfaces/EventSink.hpp` and `interfaces/EngineAPI.hpp`
 
 **What it does:**
@@ -2085,6 +2198,52 @@ The README lives at the repo root because that's what GitHub renders by default 
 **Check your understanding:**
 1. When would you create a *new* ADR vs. updating an existing one? (Hint: if Phase 3 switches from `std::map` to a flat sorted array for the price tree, is that a new ADR or an update to ADR-002?)
 2. Why does ADR-001 mention "signed, not unsigned" for prices — what calculation produces a negative price-related value that unsigned would mishandle?
+
+---
+
+### Phase 1 Requirement → Test Traceability
+
+The table below maps every Phase 1 functional/non-functional requirement to the specific GoogleTest test name(s) that verify it. This is the "proof chain" a recruiter (or interviewer) can follow from spec to code.
+
+| Requirement | Description | Test Name(s) |
+|---|---|---|
+| R1 | Valid limit order inserts at correct price level, FIFO position, then attempts matching | `MatchingEngineTest.LimitBuyRestsOnEmptyBook`, `MatchingEngineTest.LimitSellRestsOnEmptyBook`, `MatchingEngineTest.NonCrossingLimitOrdersRestOnBothSides`, `OrderBookTest.SamePriceFIFOOrdering` |
+| R2 | Duplicate OrderId (lifetime-unique) rejected | `MatchingEngineTest.DuplicateOrderIdRejected`, `MatchingEngineTest.DuplicateIdRejectedEvenAfterFullFill`, `MatchingEngineTest.MarketOrderDuplicateIdRejected`, `IntegrationTest.FillBookCancelEverythingRefillAndSweep` (Phase C) |
+| R3 | Zero quantity rejected with InvalidQuantity | `MatchingEngineTest.ZeroQuantityRejected`, `MatchingEngineTest.MarketOrderZeroQuantityRejected`, `EdgeCaseTest.ZeroQuantityLimitOrderRejected` |
+| R4 | Non-positive price rejected with InvalidPrice | `MatchingEngineTest.ZeroPriceRejected`, `MatchingEngineTest.NegativePriceRejected` |
+| R5 | Price-time priority matching (best price first, FIFO within level) | `MatchingEngineTest.CrossingSellFullyFillsRestingBuy`, `MatchingEngineTest.CrossingBuyFullyFillsRestingSell`, `MatchingEngineTest.CrossingMultipleLevels`, `MatchingEngineTest.FIFOMatchingWithinLevel`, `MatchingEngineTest.PriceTimePrioritySweepsLevelsInOrder`, `MatchingEngineTest.FIFOWithinLevelRespectedForMultipleOrders`, `MatchingEngineTest.FIFOPartialFillThirdOrderAtSamePrice`, `IntegrationTest.SweepMultiLevelBookWithLargeCrossingOrder` |
+| R6 | Trade executes at resting order's price | `MatchingEngineTest.TradeAtRestingOrderPrice`, `IntegrationTest.InterleavedLimitAndMarketOrders` (sell crosses buy at buy's price) |
+| R7 | Fully consumed resting order removed from book and index | `MatchingEngineTest.CrossingSellFullyFillsRestingBuy`, `MatchingEngineTest.FIFOPartialFillThirdOrderAtSamePrice`, `OrderBookTest.RemoveLastOrderAtLevelPrunesLevel`, `EdgeCaseTest.TotalQuantityZeroAfterFullConsumption` |
+| R8 | Partially filled incoming limit order rests with remaining qty | `MatchingEngineTest.PartialFillRestsRemainder`, `MatchingEngineTest.PartialFillOfRestingOrder`, `IntegrationTest.PartialFillThenCancelRemainder` |
+| R9 | Market order matches immediately against opposite side, no price constraint | `MatchingEngineTest.MarketBuyFullyFillsAvailableSells`, `MatchingEngineTest.MarketSellFullyFillsAvailableBuys`, `MatchingEngineTest.MarketOrderFullSweepEmptiesOppositeSide`, `EdgeCaseTest.MarketOrderExactlyExhaustsLiquidity` |
+| R10 | Market order remainder discarded (never rests) | `MatchingEngineTest.MarketBuyOnEmptyBookNoFills`, `MatchingEngineTest.MarketSellOnEmptyBookNoFills`, `MatchingEngineTest.MarketBuyPartialFillDoesNotRest`, `MatchingEngineTest.MarketSellPartialFillDoesNotRest` |
+| R11 | MarketOrder has no price field (structural, compile-time) | `OrderTypesTest.MarketOrderHasNoPriceMember` (static_assert via C++20 concept), `MatchingEngineTest.MarketOrderDispatchesViaVariant` |
+| R12 | Cancel a resting order: O(1) removal, returns Accepted | `MatchingEngineTest.CancelRestingOrderSucceeds`, `MatchingEngineTest.CancelPartiallyFilledOrderReportsCorrectRemaining`, `MatchingEngineTest.CancelDecrementsOrderCountAndRemovesFromLookup`, `IntegrationTest.PartialFillThenCancelRemainder` |
+| R13 | Cancel unknown/already-filled/already-cancelled ID returns UnknownOrderId | `MatchingEngineTest.CancelUnknownIdReturnsUnknownOrderId`, `MatchingEngineTest.CancelAlreadyFilledOrderReturnsUnknownOrderId`, `MatchingEngineTest.DoubleCancelReturnsUnknownOrderId`, `EdgeCaseTest.CancelOnEmptyBookReturnsUnknownOrderId` |
+| R14 | Self-crossing matches normally (no self-trade prevention) | `MatchingEngineTest.SelfCrossingMatchesNormally`, `IntegrationTest.SelfCrossingMultipleOrdersMatchNormally` |
+| R15 | Book exposes read-only view (price levels, quantities, queues) | `IntegrationTest.BookAccessorConsistencyThroughLifecycle`, `EdgeCaseTest.TotalQuantityCorrectAfterPartialFill`, `EdgeCaseTest.BidSideTotalQuantityCorrectAfterPartialFill`, `OrderBookTest.BestBidReturnsHighestPrice`, `OrderBookTest.BestAskReturnsLowestPrice` |
+| R16 | on_order_accepted emitted exactly once on acceptance | `MatchingEngineTest.OrderAcceptedEventEmittedOnSuccess`, `MatchingEngineTest.MarketOrderEmitsAcceptedAndTradeEvents` |
+| R17 | on_trade emitted once per individual trade | `MatchingEngineTest.EventSinkReceivesOnTradePerFill`, `MatchingEngineTest.EventSinkOnTradeOrderMatchesEngineResponse`, `IntegrationTest.LargeScaleMarketSweepAfterPartialConsumption` |
+| R18 | on_order_cancelled emitted exactly once on cancel | `MatchingEngineTest.CancelRestingOrderSucceeds`, `MatchingEngineTest.CancelPartiallyFilledOrderReportsCorrectRemaining` |
+| R19 | Rejections do NOT trigger any EventSink call | `MatchingEngineTest.NoEventOnRejection`, `MatchingEngineTest.CancelRejectionNoEvents`, `MatchingEngineTest.MarketOrderRejectionNoEvents` |
+| R20 | EventSink calls synchronous, same order as EngineResponse.trades | `MatchingEngineTest.EventSinkOnTradeOrderMatchesEngineResponse`, `MatchingEngineTest.PriceTimePrioritySweepsLevelsInOrder` (verifies sink order matches response order) |
+| NFR1 | Engine performs zero I/O | Structural — enforced by code review; no `#include <iostream>`, `printf`, file, or socket calls in `engine/`, `orderbook/`, `core/` |
+| NFR2 | No wall-clock time; FIFO via monotonic Sequence | `MatchingEngineTest.SequenceCounterIncrements`, `MatchingEngineTest.TradeSequenceCounterIncrements`, `MatchingEngineTest.TradeSequenceStrictlyIncreasingWithinSubmission` |
+| NFR3 | Single-threaded, no thread-safety responsibility | Structural — no `std::mutex`, `std::atomic`, or threading primitives in engine code |
+| NFR4 | Cancel/lookup/lifetime-unique check are O(1) amortized | `EdgeCaseTest.RapidAddCancelSequencesNoCorruption` (200 iterations), `EdgeCaseTest.ThousandOrdersAtSamePriceLevel` (1000 orders swept in FIFO) — correctness tests; O(1) is structural via `unordered_map`/`unordered_set` |
+| NFR5 | No floating-point in core/orderbook/engine | Structural — enforced by code review and CI (clang-tidy); `CoreTypesTest.NoImplicitConversion` (static_assert no implicit conversions between strong types) |
+
+**Test files:**
+- `tests/matching_engine_test.cpp` — primary engine-level tests (R1–R20)
+- `tests/order_book_test.cpp` — data-structure-level tests (R1, R5, R7, R15)
+- `tests/price_level_test.cpp` — intrusive list correctness (R1, R7, R15)
+- `tests/edge_case_test.cpp` — boundary conditions and stress (R3, R5, R7, R9, R10, R12, R13, R15, NFR4)
+- `tests/integration_test.cpp` — multi-step scenarios (R2, R5, R6, R8, R9, R10, R12, R14, R15, R17, R20)
+- `tests/test_order_types.cpp` — compile-time structural guarantees (R11)
+- `tests/test_events.cpp` — event/response type construction (supports R16–R19 indirectly)
+- `tests/test_interfaces.cpp` — port abstractions and NullEventSink (R16–R20 infrastructure)
+- `tests/core_types_test.cpp` — strong type safety (NFR5)
+- `tests/core_trade_test.cpp` — Trade struct field access (supports R6, R17)
 
 ---
 
@@ -3960,3 +4119,324 @@ The MutexQueue could use a condition variable (`cv.wait(lock, [&]{ return !queue
 4. **`WorkloadEvent` alias tidy-up** — eliminated duplicate `CancelRequest` definition (Task 4)
 5. **Benchmark comparison** — 7.17x throughput speedup over mutex baseline; results in `benchmarks/results/phase-04-queue-comparison.md` (Task 5)
 6. **Default constructors for core types** — enables variant storage in contiguous arrays (incidental change required by Task 2)
+
+
+## Phase 5: TCP Order Gateway
+
+### Task 4.2 — `handle_accept()`: accept4(SOCK_NONBLOCK), TCP_NODELAY, ClientId Assignment
+
+**What it does:**
+Implements the connection-acceptance path in the TCP server. When the epoll event loop detects that the listener socket is readable (meaning one or more clients have completed the TCP three-way handshake and are sitting in the kernel's accept queue), `handle_accept()` drains all of them in a loop, configures each socket for low-latency operation, assigns it a unique identity, and registers it for further event monitoring.
+
+**Exact location:**
+`adapters/tcp/tcp_server.cpp:180–230` — the `TcpServer::handle_accept()` method.
+
+**Why `accept4(SOCK_NONBLOCK)` instead of `accept()` + `fcntl()`:**
+`accept4` is a Linux-specific syscall (since kernel 2.6.28) that atomically creates the new socket with flags already set. The alternative — `accept()` followed by `fcntl(fd, F_SETFL, O_NONBLOCK)` — is two syscalls instead of one, and has a race window: between `accept()` returning and `fcntl()` completing, the fd is blocking, which could theoretically stall the I/O thread if any code path accidentally read/wrote to it in that gap. One atomic syscall is both simpler and safer.
+
+**Why drain in a loop until EAGAIN:**
+Because the listener is registered with `EPOLLET` (edge-triggered), epoll delivers a notification only on a *transition* from "no pending connections" to "at least one pending connection." If three clients connect between two `epoll_wait()` returns, epoll fires *once*, not three times. If we call `accept4` only once per notification, we'd leave two connections unserviced until the next edge transition — which might never come. The loop ensures we process all pending connections on each wake.
+
+**Why `TCP_NODELAY` immediately after accept:**
+Nagle's algorithm (RFC 896) coalesces small TCP segments into a single larger one, introducing up to 40ms of latency waiting for either more data or an ACK. For a trading system, this is unacceptable: every order submission or response is a small, time-critical message that must go out immediately. `TCP_NODELAY` disables Nagle's algorithm, causing each `send()`/`write()` to produce a TCP segment immediately (requirement R2).
+
+The `setsockopt` is the very first thing done after `accept4`. If it fails (which would indicate a kernel/driver bug — virtually never happens in practice), the connection is closed immediately rather than silently operating with Nagle enabled, because a "working but slow" connection is worse than an explicit rejection in a latency-sensitive system.
+
+**Why `ClientId` from a monotonic counter, not from the fd number:**
+File descriptors are recycled by the OS — when a client disconnects and a new one connects, the new connection might receive the same fd number. Using fd as identity would create confusion: "is fd 7 the client who placed order #42, or a completely new client?" A monotonically increasing `next_client_id_++` counter guarantees globally unique identity within a server lifetime. No atomics needed because only the I/O thread (the single thread running the epoll loop) ever accepts connections.
+
+**Why no atomics on `next_client_id_`:**
+The I/O thread is the sole acceptor — no other thread ever reads or writes this counter. Using `std::atomic<uint64_t>` here would add unnecessary overhead (acquire/release fences) for safety that isn't needed. This is a deliberate design choice documented in `design.md` §5.
+
+**Architecture — why this lives in `adapters/tcp/`:**
+The TCP server is an adapter in the Ports & Adapters sense — it translates between the external world (TCP sockets, byte streams) and the engine's domain (commands, responses). It depends inward on `core/Types.hpp` (for `ClientId`) and will later depend on `interfaces/EngineAPI`. The engine never knows TCP exists.
+
+**Complexity:**
+- Time: O(k) per `handle_accept()` call, where k is the number of pending connections in the kernel's accept queue. Each connection does O(1) work (one syscall + one map insertion + one epoll registration).
+- Space: O(n) total for n active connections (one `Connection` struct + two map entries each).
+
+**Benefits:**
+1. Single syscall per connection (`accept4` vs. accept + fcntl)
+2. Edge-triggered drain guarantees no connection is left unserviced
+3. Immediate `TCP_NODELAY` prevents accidental latency from the very first byte sent
+4. Monotonic `ClientId` provides unambiguous identity for response routing (Task 5)
+5. Fail-fast on `TCP_NODELAY` failure — never silently degrade latency
+
+**Drawbacks / tradeoffs:**
+- `accept4` is Linux-only — not portable to macOS/BSD (fine for this project: Linux-only per tech.md)
+- No connection rate limiting — a burst of thousands of connections will be processed synchronously in one loop iteration. For this project's expected tens of clients, this is fine; a production exchange would add backpressure here.
+- If `epoll_ctl(EPOLL_CTL_ADD)` fails (e.g., epoll instance is at max watchers), the connection is silently dropped after cleanup. No way to notify the client since we never registered for writes. Acceptable for a portfolio project; production would log the failure.
+
+**Alternatives considered:**
+1. **`accept()` + `fcntl()`**: Two syscalls, race window, no benefit. Rejected.
+2. **Level-triggered listener**: Would also work (don't need to drain in a loop). But since the entire epoll instance is edge-triggered for client sockets (to avoid thundering-herd issues with write readiness), mixing trigger modes adds cognitive overhead for no gain. Keeping the listener edge-triggered and draining is simpler to reason about uniformly.
+3. **Using fd as ClientId**: Recycling problem described above. Rejected.
+4. **Thread-per-connection (no epoll)**: Trivially simpler code but O(n) threads, context-switch overhead, cache pollution, and doesn't demonstrate the epoll skills that HFT employers care about. Rejected.
+
+**How this connects to what came before:**
+- Depends on `ClientId` (Phase 5 Task 3.1) as the per-connection identifier type.
+- The `Connection` struct and both maps (`connections_`, `client_to_fd_`) were declared in Task 4.1's header skeleton — this task fills in the code that populates them.
+- The listener socket and epoll instance were set up in Task 4.1 (`setup_listener()`, `setup_epoll()`); `handle_accept()` is the first event handler that actually uses them productively.
+
+**Check your understanding:**
+1. What would happen if `handle_accept()` called `accept4()` only once instead of looping? Under what conditions would clients get stuck in the kernel's accept queue?
+2. Why is closing the fd on `TCP_NODELAY` failure preferable to continuing with Nagle enabled, even though the connection "works" either way?
+
+### Task 4.4 — `handle_read()`: Loop-Read Until EAGAIN, Length-Prefix Framing
+
+**What it does:**
+Implements the data reception and message framing path for the TCP server. When epoll signals that a client fd is readable, `handle_read()` drains all available bytes from the kernel's receive buffer (edge-triggered requirement), appends them to the connection's per-client read buffer, then scans that buffer for complete frames using 4-byte big-endian length-prefix framing. Each extracted frame is dispatched to a pluggable callback (`FrameHandler`). Additionally introduces the `set_frame_handler()` API so that later tasks (Task 5) can wire in the text protocol parser without modifying `TcpServer` itself.
+
+**Exact locations:**
+- `adapters/tcp/tcp_server.cpp:223–279` — `TcpServer::handle_read()` method
+- `adapters/tcp/tcp_server.cpp:281–287` — `TcpServer::process_frame()` helper
+- `adapters/tcp/tcp_server.cpp:171–173` — `TcpServer::set_frame_handler()`
+- `adapters/tcp/tcp_server.hpp:18–19` — `kMaxFrameSize` constant (4096 bytes)
+- `adapters/tcp/tcp_server.hpp:23` — `FrameHandler` type alias
+- `adapters/tcp/tcp_server.hpp:72–75` — `set_frame_handler()` declaration
+
+**Why loop-read until EAGAIN (not "read once per epoll event"):**
+Same rationale as `handle_accept()`: the fd is registered `EPOLLET` (edge-triggered). Epoll fires once per transition from "no data" to "data available." If a client sends 12KB in one burst and we `read()` only once (4096 bytes), we'd leave 8KB sitting in the kernel buffer with no further epoll notification — that data would never be processed until the next edge transition (i.e., the client sends more data). The loop guarantees we drain everything available right now.
+
+The loop structure:
+```
+while (true) {
+    ssize_t n = ::read(fd, buf, sizeof(buf));
+    if (n > 0)       → append to read_buffer
+    if (n == 0)      → EOF, close connection
+    if (n < 0) {
+        EAGAIN       → drain complete, break
+        EINTR        → retry immediately
+        other        → error, close connection
+    }
+}
+```
+
+**Why 4-byte big-endian length-prefix framing (not newline-delimited):**
+TCP is a byte stream — there's no inherent message boundary. We need explicit framing. Two common choices:
+1. **Newline-delimited**: Simple, works for text. But breaks if the payload ever contains a newline (binary data in Phase 7), requires scanning the entire buffer for `\n`, and has no way to pre-allocate buffer space since the message length is unknown until the delimiter arrives.
+2. **Length-prefix**: The first 4 bytes declare exactly how many bytes follow. Advantages: (a) the receiver knows immediately how much data to expect — can detect "partial frame" with a single size comparison, no byte-scanning; (b) works identically for text (this phase) and binary (Phase 7); (c) O(1) to check "is the frame complete?" vs O(n) scanning for a delimiter.
+
+Big-endian is the network byte order convention (RFC 1700). Using it means wireshark/tcpdump show the length field correctly without conversion, and it matches how virtually every binary protocol (FIX SOFH, SBE, Protobuf varint aside) encodes lengths on the wire.
+
+**Why `kMaxFrameSize = 4096` (and why disconnect on violation):**
+Without a maximum frame size, a malicious or buggy client could send a length prefix of 2GB, causing the server to allocate and wait for that much data — an easy denial-of-service vector (design.md §5, NFR2). The 4KB limit is a hardcoded constant per Phase 5's design (judgment call §7 item 4). It's generous for the text protocol grammar (longest valid command: `ADD <20-digit-id> BUY <20-digit-price> <20-digit-qty>` ≈ ~70 bytes), with headroom for Phase 7's binary messages.
+
+On violation, the connection is closed immediately — there's no "try to recover" because a length prefix exceeding 4KB means either a protocol violation (client is not speaking our protocol) or corruption (the framing state is desynchronized). In either case, any further bytes on this connection are uninterpretable.
+
+**Why a `FrameHandler` callback (not virtual override or direct coupling):**
+Three options for dispatching complete frames:
+1. **Virtual method**: Requires subclassing `TcpServer` to change behavior. Heavier, and this project has no other reason to subclass the server.
+2. **Direct call to parser**: Creates a compile-time dependency from `adapters/tcp/` to `adapters/text_protocol/`. Violates the principle that TCP framing is protocol-agnostic — the same server could frame binary messages in Phase 7.
+3. **`std::function` callback**: Set once during wiring (before `run()` is called), zero coupling between the framing layer and whatever parses the payload. Trivially testable: tests can set a lambda that captures frames into a vector.
+
+Option 3 wins: loosest coupling, easiest to test, no inheritance hierarchy, and the `std::function` overhead (one indirect call per frame) is negligible compared to the syscall cost of the `read()` that preceded it.
+
+**Why `process_frame()` is a separate method (not inlined in `handle_read`):**
+Separation of concerns within the implementation. `handle_read()` is responsible for I/O draining and frame boundary detection. `process_frame()` is responsible for dispatch. This makes the code easier to read and allows `process_frame()` to be a single point where breakpoints or instrumentation can be placed during debugging.
+
+**Why `erase(0, 4 + payload_len)` for buffer management (not a read cursor):**
+Two approaches for consuming from a string buffer:
+1. **Erase prefix**: `buffer.erase(0, consumed_bytes)` — shifts remaining bytes to the front. O(remaining) per erase.
+2. **Read cursor**: Track an offset into the buffer, only compact when the cursor gets large. O(1) per consume, periodic O(n) compaction.
+
+For this phase, approach 1 is simpler and correct. The typical case is one complete frame per read cycle (single command from a client), so "remaining" after erase is usually 0 bytes — effectively O(1). If profiling later shows this is a bottleneck (e.g., many frames batched in one TCP segment), switching to a cursor-based approach is a straightforward optimization in Phase 3's spirit of "measure before optimizing."
+
+**Complexity:**
+- Time: O(b) per `handle_read()` call, where b is total bytes available. The loop-read is O(b), frame extraction is O(f × m) where f is frames found and m is the average payload length (due to `erase`), but since each byte is processed at most twice (read + erase), the total is O(b) amortized.
+- Space: O(b) for the read buffer (bounded by the fact that we process frames immediately and discard consumed data).
+
+**Benefits:**
+1. Correct under edge-triggered semantics — never leaves data unread
+2. Handles partial frames naturally (buffer accumulates until complete)
+3. Handles multiple frames in one TCP segment (inner while loop)
+4. Protocol-agnostic framing via callback — works for text now, binary later
+5. Memory-safe: max frame cap prevents unbounded allocation
+6. Clean EOF handling — peer disconnect is detected and cleaned up immediately
+
+**Drawbacks / tradeoffs:**
+- `string::erase(0, n)` is O(n) on remaining bytes. Acceptable for typical single-frame-per-read patterns; a production system might use a ring buffer or cursor approach.
+- The 4KB max frame size is hardcoded. If Phase 7's binary messages ever exceed 4KB, this constant needs updating. A runtime-configurable limit would be more flexible, but YAGNI for now.
+- No backpressure on frame processing — if `frame_handler_` is slow (shouldn't be — it just pushes to an SPSC queue), it blocks the entire I/O thread. This is by design: the handler is expected to be O(1) (queue push), not O(n) (matching).
+
+**Alternatives considered:**
+1. **Newline-delimited framing**: Simpler for pure text, but doesn't generalize to binary (Phase 7). Would require a different framing strategy later, meaning two code paths to maintain. Rejected.
+2. **Fixed-size messages (no framing)**: Only works if all messages are the same size. Ours aren't. Rejected.
+3. **Netstring framing** ("123:payload,"): Text-safe, but the ASCII length prefix requires parsing digits and finding the `:` delimiter — more complex than a fixed-4-byte binary prefix, and no benefit since our transport is already binary (TCP bytes). Rejected.
+4. **Virtual `on_frame_received()`**: Requires inheritance hierarchy for no compositional benefit. Rejected in favor of `std::function`.
+
+**How this connects to what came before:**
+- Depends on Task 4.1's `Connection` struct (specifically `read_buffer`) and the epoll registration that delivers `EPOLLIN` events.
+- Depends on Task 4.2's `handle_accept()` having populated `connections_` and `client_to_fd_` — `handle_read()` looks up the fd in `connections_` to find the per-client state.
+- Will be consumed by Task 5: `set_frame_handler()` is the integration point where the text protocol parser gets wired in.
+- The same framing logic works unchanged for Phase 7's binary protocol — only the callback changes.
+
+**Check your understanding:**
+1. If the read buffer contains `[00 00 00 05] [H E L L]` (4-byte length prefix saying 5 bytes, but only 4 payload bytes arrived so far), what does `handle_read()` do with it? Why doesn't it try to parse a partial frame?
+2. What happens if a client sends two complete frames concatenated in a single TCP segment? Trace through the frame-extraction while loop.
+3. Why would using `EPOLLIN` without `EPOLLET` (level-triggered) make the drain loop unnecessary — and what new problem would it introduce for write handling?
+
+
+
+### Task 4.5 — Write Path: Per-Connection Write Buffer, Flush Loops, EPOLLOUT Arm/Disarm
+
+**What it does:**
+Implements the outbound data path for the TCP server. When the server needs to send a response to a specific client, data is appended to that connection's `write_buffer` and an immediate flush is attempted. If the kernel's TCP send buffer fills up (socket returns `EAGAIN`), `EPOLLOUT` is armed so the epoll loop wakes us when the socket becomes writable again. Once the buffer drains completely, `EPOLLOUT` is disarmed to avoid wasting CPU cycles on spurious "writable" notifications.
+
+This task also introduces `send_to_client(ClientId, std::string_view)` — the public API that later tasks (Task 5's response routing, Task 6's outbound queue drain) will call to deliver data to a specific connected client.
+
+**Exact locations:**
+- `adapters/tcp/tcp_server.cpp` — `handle_write()` (~line 282), `flush_write_buffer()` (~line 289), `arm_epollout()` (~line 318), `disarm_epollout()` (~line 325), `send_to_client()` (~line 332)
+- `adapters/tcp/tcp_server.hpp` — `send_to_client()` declaration (public section), `flush_write_buffer()`/`arm_epollout()`/`disarm_epollout()` declarations (private section)
+
+**Why `send()` with `MSG_NOSIGNAL` instead of `write()`:**
+
+On Linux, writing to a socket whose peer has disconnected (the remote end closed or crashed) generates a `SIGPIPE` signal by default. The default handler for `SIGPIPE` terminates the process — catastrophic for a server handling multiple clients. Two common solutions:
+
+1. **Process-wide `signal(SIGPIPE, SIG_IGN)`**: Ignores `SIGPIPE` globally. Works, but affects the entire process (including any future libraries or subsystems that might legitimately want `SIGPIPE`). A blunt instrument.
+2. **`MSG_NOSIGNAL` flag on `send()`**: Suppresses `SIGPIPE` per-call. The failed write returns -1 with `errno == EPIPE` instead of killing the process. Surgically precise — only affects this specific I/O path.
+
+We use option 2. It's the standard approach in Linux server code: each `send()` call individually opts out of `SIGPIPE` delivery, letting us handle the broken connection gracefully in the error path (`close_connection()`). No global signal state is modified, no process-wide side effects.
+
+**Why EPOLLOUT must be armed *only* when data is pending (the "busy-loop prevention" problem):**
+
+A socket is almost always writable — the kernel's send buffer (~200KB default on Linux) is usually not full. Under level-triggered semantics, an always-writable socket would generate an event on *every* `epoll_wait()` call, burning 100% CPU doing nothing. Edge-triggered (`EPOLLET`) is better: it fires only on *transitions*. But if EPOLLOUT is unconditionally registered, the edge fires once after the socket becomes writable (which happens immediately after `accept()`), causing one spurious wakeup.
+
+The correct pattern is:
+1. **Initially**: socket registered as `EPOLLIN | EPOLLET` only. No EPOLLOUT.
+2. **When `flush_write_buffer()` hits EAGAIN**: Arm EPOLLOUT via `epoll_ctl(EPOLL_CTL_MOD, ...)` adding `EPOLLOUT` to the event mask. Now epoll will fire when the send buffer drains.
+3. **When `handle_write()`/`flush_write_buffer()` drains the buffer completely**: Disarm EPOLLOUT via `epoll_ctl(EPOLL_CTL_MOD, ...)` removing `EPOLLOUT`. Back to read-only monitoring.
+
+This "arm on EAGAIN, disarm on drain" pattern is the textbook edge-triggered write approach in Linux network servers. It ensures epoll only wakes the I/O thread when there's actual work to do — either data to read (EPOLLIN) or buffer space available to flush pending writes (EPOLLOUT, but only when we have pending writes).
+
+**Why flush immediately in `send_to_client()` (not just buffer and wait for EPOLLOUT):**
+
+An alternative design would be: append to `write_buffer`, arm EPOLLOUT, and let the next `handle_write()` call do the actual flush. This adds one unnecessary epoll round-trip for the common case (where the socket *is* writable and the data *can* be sent immediately). For a trading system, that extra round-trip is pure wasted latency — potentially an entire `epoll_wait()` cycle (microseconds) for no reason.
+
+The chosen design: append + attempt immediate flush. In the common case (socket writable, buffer small), data goes out in the *same* event-loop iteration, zero additional latency. EPOLLOUT is only armed in the uncommon case (kernel send buffer full), as a retry mechanism. Best-case latency: zero added epoll overhead. Worst-case: one epoll cycle delay (same as the buffer-only approach).
+
+**Why `string::erase(0, n)` in the flush loop (same trade-off as `handle_read`):**
+
+Same analysis as Task 4.4's read buffer: `erase(0, n)` is O(remaining) per call due to the byte shift. For typical response sizes (< 100 bytes per order response), "remaining" after a successful `send()` is usually 0 bytes — effectively free. A production server handling large bulk responses might use a `deque<char>` or a scatter-gather `writev()` approach to avoid the shift, but for this project's message sizes (tens of bytes per response), the `std::string` approach is perfectly adequate.
+
+**Why `close_connection()` on write error (not "just stop writing"):**
+
+If `send()` returns an error other than `EAGAIN`/`EINTR`, the socket is broken — `EPIPE` (peer closed), `ECONNRESET` (peer sent RST), or some other non-recoverable condition. Continuing to buffer data for a dead socket wastes memory. Closing immediately is the only sane response: release the fd, clean up the maps, let any pending read buffer be discarded. The client, if it reconnects, will get a fresh `ClientId` and fresh state.
+
+**Architecture — the three write-path layers:**
+
+```
+send_to_client(ClientId, data)     ← Public API (Task 5/6 will call this)
+    └─► flush_write_buffer(conn)   ← The flush loop (drain until EAGAIN or empty)
+          ├─► arm_epollout(fd)     ← On EAGAIN: ask epoll to wake us when writable
+          └─► disarm_epollout(fd)  ← On drain-complete: stop EPOLLOUT notifications
+
+handle_write(fd)                   ← Called by epoll loop on EPOLLOUT event
+    └─► flush_write_buffer(conn)   ← Same flush logic, entered from a different trigger
+```
+
+Two entry points (`send_to_client` for immediate flush, `handle_write` for deferred retry), both converge on the same `flush_write_buffer()` logic. This avoids code duplication and ensures consistent arm/disarm behavior regardless of which path triggered the write.
+
+**Complexity:**
+- **send_to_client():** O(1) for the two map lookups (hash map) + O(b) for the flush attempt where b is the write buffer size (typically small — one response message).
+- **flush_write_buffer():** O(b/segment_size) send calls in the common case (one call suffices for small buffers). O(b) for the `erase()` cleanup.
+- **arm_epollout()/disarm_epollout():** O(1) — one `epoll_ctl()` syscall each.
+
+**Benefits:**
+1. **Minimal-latency common path:** Response data goes out immediately in the same event-loop iteration — no extra epoll round-trip for the typical case (socket writable).
+2. **Backpressure handling:** If a client is slow to read (full kernel send buffer), we don't spin or block — we just buffer and wait for EPOLLOUT. Other clients are unaffected (NFR2: "a slow client must not stall other clients").
+3. **No busy-looping:** EPOLLOUT is only armed when needed. An idle server with 100 connected clients does zero write-related work.
+4. **No SIGPIPE crashes:** `MSG_NOSIGNAL` ensures a peer disconnect during write is a graceful error, not a process termination.
+5. **Clean separation:** `send_to_client()` is the only public write API — later tasks wire response routing through a single, well-defined entry point.
+
+**Drawbacks / tradeoffs accepted:**
+1. **`epoll_ctl()` return value is unchecked in arm/disarm:** If `EPOLL_CTL_MOD` fails (extremely unlikely — would indicate a kernel bug or fd already closed by a race), we silently continue. A production system might log or assert here. Acceptable for this project because the only realistic failure mode (fd closed between the lookup and the `epoll_ctl` call) would be caught on the next read/write attempt anyway.
+2. **Single `std::string` write buffer per connection:** Under heavy load with a slow client, this buffer can grow unboundedly. A production server would add a per-connection write buffer cap (e.g., 1MB) and disconnect clients exceeding it ("write buffer exhaustion"). This phase doesn't implement that cap — it's a Phase 8 (risk/limits) or later concern.
+3. **No `writev()`/scatter-gather:** We flush a single contiguous buffer. If multiple responses are appended between flush opportunities, they're concatenated in the `std::string` and sent as one chunk — which is actually fine (fewer syscalls). But if we ever needed to zero-copy from a response buffer into the socket, `writev()` would be the upgrade path.
+
+**Alternatives considered:**
+1. **Always-armed EPOLLOUT + level-triggered:** Would "just work" without the arm/disarm dance. Rejected because it causes constant EPOLLOUT notifications on idle but connected sockets (every `epoll_wait` returns them as writable), wasting CPU proportional to connection count. The arm/disarm approach costs one extra `epoll_ctl` per slow-client episode but zero CPU when idle.
+2. **`write()` instead of `send(MSG_NOSIGNAL)`:** Requires a process-wide `signal(SIGPIPE, SIG_IGN)` to avoid crashes. Less precise, affects other subsystems. Rejected in favor of per-call suppression.
+3. **Buffer-only approach (no immediate flush):** Append to buffer, arm EPOLLOUT, wait. Adds one full epoll round-trip of latency in the common case. Rejected because the immediate-flush approach is strictly better for latency (same work, fewer cycles to first byte on wire).
+4. **Coroutine/async-await style:** Modern C++20 coroutines could express the "write, suspend on EAGAIN, resume on EPOLLOUT" pattern elegantly. Rejected because coroutines add heap allocations (the coroutine frame) and compiler-dependent overhead that would undermine the "allocation-conscious" premise. The explicit state machine (buffer + arm/disarm) is more transparent and avoids hidden allocations.
+
+**How this connects to what came before:**
+- Depends on Task 4.1's `Connection::write_buffer` field (declared but unused until now) and the `client_to_fd_` reverse lookup map.
+- Depends on Task 4.2's `handle_accept()` registering connections with `EPOLLIN | EPOLLET` initially (no EPOLLOUT) — this task's arm/disarm logic modifies that registration state.
+- Depends on `close_connection()` (Task 4.6) for cleanup on write errors. That function removes the fd from epoll, erases from both maps, and closes the fd — in that order.
+- Task 5 (response routing) will call `send_to_client()` after serializing an `EngineResponse` into text + length-prefix framing.
+- Task 6 (eventfd + outbound queue) will drain `TaggedResponse`s from the queue and call `send_to_client()` for each.
+
+**Check your understanding:**
+1. If EPOLLOUT were always armed (registered at accept time and never removed), what would happen to CPU usage on a server with 1000 idle connections? Why is this worse under edge-triggered than level-triggered semantics?
+2. Why does `flush_write_buffer()` call `disarm_epollout()` even when the buffer was already empty (i.e., `send_to_client()` flushed everything on the first try)? What happens if we skip the disarm in that case? (Hint: think about whether EPOLLOUT was armed before `send_to_client` was called.)
+3. What would happen if two threads called `send_to_client()` for the same `ClientId` concurrently? Why is this not a concern in our architecture?
+
+
+### Task 4.6 — Connection Teardown on EPOLLHUP/EPOLLERR/EOF
+
+**What it does:**
+
+`close_connection(int fd)` is the single teardown path for every way a client connection can end. It performs three operations in order:
+1. Removes the fd from the epoll interest set (`EPOLL_CTL_DEL`)
+2. Erases the connection from both lookup maps (`connections_` and `client_to_fd_`)
+3. Closes the underlying file descriptor
+
+All teardown triggers converge here: EPOLLHUP (peer hung up), EPOLLERR (socket error), EOF (read returns 0), read errors, write errors, and oversized-frame protocol violations. This guarantees a single, consistent cleanup path regardless of how the connection dies.
+
+**Exact location:** `adapters/tcp/tcp_server.cpp`, lines 369–380 (the `close_connection` method).
+
+**Why explicit `EPOLL_CTL_DEL` before `close()`:**
+
+On Linux, closing a file descriptor automatically removes it from all epoll instances *if* no other file descriptor references the same underlying "file description" (kernel-internal open-file object). This automatic cleanup works fine in the common case. So why add the explicit `epoll_ctl(EPOLL_CTL_DEL)` call?
+
+Three reasons, in order of practical importance:
+
+1. **Fd-number-reuse race prevention:** After `close(fd)`, the kernel immediately recycles that fd number. If a new `accept()` happens to return the same integer, and epoll hasn't yet processed the close internally, the new connection could receive stale events intended for the old one. By explicitly removing the old fd from epoll *before* closing it, we guarantee a clean slate: the fd number is freed only after epoll no longer knows about it. This race is unlikely in practice (accept and close happen on the same thread) but "unlikely" is not "impossible" under heavy load with many concurrent connections.
+
+2. **Self-documenting intent:** The explicit call makes the epoll lifecycle visible in the code. A reader doesn't need to know Linux kernel internals (the dup'd-fd exception, the "file description vs file descriptor" distinction) to understand that cleanup is complete. The code says what it does.
+
+3. **Defensive against `dup()`-based scenarios:** If any future code path `dup()`'d a client fd (e.g., for a debug tool or logging adapter), the automatic-removal-on-close guarantee breaks (because the underlying file description is still referenced by the dup'd fd). The explicit `EPOLL_CTL_DEL` is immune to this — it removes the specific fd from epoll regardless of reference count. This won't happen in this project, but it costs nothing to be correct by construction.
+
+**Why this data structure / algorithm:**
+
+The "algorithm" here is ordering: remove from epoll → remove from maps → close fd. The order matters:
+- Epoll removal first: no more events can fire for this fd after this point.
+- Map removal second: any in-flight event processing (theoretically impossible in our single-threaded loop, but defensive) won't find a stale connection entry.
+- Close last: the fd is valid for the epoll_ctl call (you can't EPOLL_CTL_DEL an already-closed fd).
+
+**Why this architecture / pattern:**
+
+A single teardown function called from all error paths is the "funnel" pattern — it eliminates the risk of inconsistent cleanup. Without it, each call site (EPOLLHUP handler, EOF handler, read error handler, write error handler, oversized-frame handler) would need to independently remember all three cleanup steps. Miss one step in one path, and you get resource leaks or stale map entries. The funnel makes it impossible to forget.
+
+This lives in `adapters/tcp/` (not `engine/` or `core/`) because connection lifecycle is purely a network I/O concern. The engine never knows connections exist — it deals in `ClientId`s, not file descriptors.
+
+**Complexity:**
+- Time: O(1) amortized. `epoll_ctl` is O(1). `unordered_map::find` + `erase` are O(1) amortized. `close()` is O(1).
+- Space: O(1) — no additional allocations, just removal from existing containers.
+
+**Benefits:**
+1. **Prevents stale-event delivery:** No "ghost events" for closed connections.
+2. **Single cleanup path:** Five different trigger sites, one implementation — impossible to get out of sync.
+3. **Correct ordering:** Epoll removal before close prevents the fd-reuse race; map removal prevents stale lookups.
+4. **Zero-cost defensive coding:** The `epoll_ctl` call is a single syscall that returns immediately (no blocking, no allocation). The cost is immeasurable compared to the `close()` syscall that follows it.
+
+**Drawbacks / tradeoffs accepted:**
+1. **Unchecked return value from `epoll_ctl`:** If the fd was already removed (e.g., double-close bug), `EPOLL_CTL_DEL` returns -1 with `ENOENT`. We ignore this. A production system might assert or log. Acceptable here because `close_connection` is always called exactly once per fd (the map-lookup guard `if (it != connections_.end())` protects the maps, and the function is only reachable from the event loop which processes each fd at most once per event batch).
+2. **No graceful shutdown (FIN → wait for ack):** We just slam the connection closed. A production system might `shutdown(SHUT_WR)` first, drain remaining reads, then close. Acceptable because this project doesn't implement session semantics — a disconnected client simply reconnects and gets a new `ClientId`.
+
+**Alternatives considered:**
+1. **Deferred close (mark-and-sweep):** Mark the connection as "closing," defer actual `close()` to end of event loop iteration. Pros: avoids any reentrance issues if `close_connection` is called during iteration over the events array. Cons: adds complexity (a "pending close" state) for a problem we don't actually have — our event loop never iterates the `connections_` map directly, it iterates the `events[]` array returned by `epoll_wait`, which contains fd integers that are valid to look up individually. Rejected as unnecessary complexity.
+2. **No explicit `EPOLL_CTL_DEL` (rely on automatic removal):** Valid on Linux for non-dup'd fds. Rejected for the three reasons described above — the defensive benefit is free and the self-documenting value is real.
+3. **Separate teardown functions per trigger type:** e.g., `handle_eof()`, `handle_epoll_error()`, `handle_write_error()` each doing their own cleanup. Rejected because it multiplies the maintenance surface and invites inconsistency (one path forgets to erase from `client_to_fd_`, another forgets to close the fd). The single-funnel pattern is strictly superior here.
+
+**How this connects to what came before:**
+- Task 4.2 (`handle_accept`) creates the connection: adds to `connections_`, adds to `client_to_fd_`, registers with epoll. This task is the exact inverse — it undoes all three registrations.
+- Task 4.3 (epoll event loop) dispatches `EPOLLHUP | EPOLLERR` to `close_connection`. Task 4.4 (read path) calls it on EOF and read errors. Task 4.5 (write path) calls it on write errors and oversized frames. All converge here.
+- The `arm_epollout`/`disarm_epollout` helpers from Task 4.5 call `EPOLL_CTL_MOD` — same `epoll_ctl` function, different operation. If a connection has EPOLLOUT armed when it's torn down, the `EPOLL_CTL_DEL` here supersedes that state entirely (removes the fd from epoll completely, not just changing its event mask).
+- Task 5 (response routing) will call `send_to_client(ClientId, ...)`, which looks up `client_to_fd_`. If teardown has already run, that lookup returns `end()` and the response is silently dropped — correct behavior for "client disconnected before response was sent."
+
+**Check your understanding:**
+1. What would happen if `close_connection` called `::close(fd)` *before* `::epoll_ctl(EPOLL_CTL_DEL, fd, ...)`? Under what (admittedly unlikely) timing could this cause a bug? (Hint: think about what happens if `accept()` returns the same fd number in between.)
+2. Why is it safe to call `close_connection(fd)` from inside `handle_read(fd)` (i.e., in the middle of processing events for that fd)? What would break if the event loop iterated over `connections_` directly instead of the `events[]` array?
+3. The destructor (`~TcpServer`) also closes all connection fds but does *not* call `epoll_ctl(EPOLL_CTL_DEL)` for each one. Why is that safe? (Hint: what happens to the epoll instance itself in the destructor?)

@@ -1,0 +1,5 @@
+if(EXISTS "C:/Users/harsh/Desktop/MiniExchange/build_check/matching_engine_test_e3b0c442_tests.cmake")
+  include("C:/Users/harsh/Desktop/MiniExchange/build_check/matching_engine_test_e3b0c442_tests.cmake")
+else()
+  add_test(matching_engine_test_NOT_BUILT matching_engine_test_NOT_BUILT)
+endif()

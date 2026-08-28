@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 #include <type_traits>
+#include <unordered_map>
 #include <unordered_set>
 
 using namespace miniexchange;
@@ -107,7 +108,79 @@ TEST(CoreTypesTest, OrderIdHashable) {
     id_set.insert(OrderId{1});  // duplicate
 
     EXPECT_EQ(id_set.size(), 2u);
-    EXPECT_TRUE(id_set.contains(OrderId{1}));
-    EXPECT_TRUE(id_set.contains(OrderId{2}));
-    EXPECT_FALSE(id_set.contains(OrderId{3}));
+    EXPECT_TRUE(id_set.count(OrderId{1}) > 0);
+    EXPECT_TRUE(id_set.count(OrderId{2}) > 0);
+    EXPECT_FALSE(id_set.count(OrderId{3}) > 0);
+}
+
+// --- ClientId Tests ---
+
+TEST(ClientIdTest, NoImplicitConstruction) {
+    // ClientId's constructor is explicit — cannot implicitly construct from uint64_t
+    static_assert(!std::is_convertible_v<uint64_t, ClientId>,
+                  "ClientId should not be implicitly constructible from uint64_t");
+}
+
+TEST(ClientIdTest, NoImplicitConversionToUint64) {
+    // ClientId should not implicitly convert back to uint64_t
+    static_assert(!std::is_convertible_v<ClientId, uint64_t>,
+                  "ClientId should not implicitly convert to uint64_t");
+}
+
+TEST(ClientIdTest, EqualityAndInequality) {
+    ClientId c1{100};
+    ClientId c2{100};
+    ClientId c3{200};
+
+    EXPECT_EQ(c1, c2);
+    EXPECT_NE(c1, c3);
+    EXPECT_EQ(c1.value, 100u);
+    EXPECT_EQ(c3.value, 200u);
+}
+
+TEST(ClientIdTest, HashConsistency) {
+    std::hash<ClientId> hasher;
+
+    ClientId c1{42};
+    ClientId c2{42};
+    ClientId c3{99};
+
+    // Same value → same hash
+    EXPECT_EQ(hasher(c1), hasher(c2));
+
+    // Different values → different hashes (not guaranteed in general,
+    // but for trivial uint64_t-based hashes this should hold for small inputs)
+    EXPECT_NE(hasher(c1), hasher(c3));
+}
+
+TEST(ClientIdTest, UsableAsUnorderedMapKey) {
+    // Compile-time verification: unordered_map<ClientId, int> must compile
+    std::unordered_map<ClientId, int> client_map;
+    client_map[ClientId{1}] = 10;
+    client_map[ClientId{2}] = 20;
+    client_map[ClientId{1}] = 30;  // overwrite
+
+    EXPECT_EQ(client_map.size(), 2u);
+    EXPECT_EQ(client_map[ClientId{1}], 30);
+    EXPECT_EQ(client_map[ClientId{2}], 20);
+}
+
+TEST(ClientIdTest, UsableInUnorderedSet) {
+    std::unordered_set<ClientId> client_set;
+    client_set.insert(ClientId{5});
+    client_set.insert(ClientId{10});
+    client_set.insert(ClientId{5});  // duplicate
+
+    EXPECT_EQ(client_set.size(), 2u);
+    EXPECT_TRUE(client_set.count(ClientId{5}) > 0);
+    EXPECT_TRUE(client_set.count(ClientId{10}) > 0);
+    EXPECT_FALSE(client_set.count(ClientId{99}) > 0);
+}
+
+TEST(ClientIdTest, DistinctFromOrderId) {
+    // ClientId and OrderId are different types — no implicit conversion
+    static_assert(!std::is_convertible_v<ClientId, OrderId>,
+                  "ClientId should not implicitly convert to OrderId");
+    static_assert(!std::is_convertible_v<OrderId, ClientId>,
+                  "OrderId should not implicitly convert to ClientId");
 }

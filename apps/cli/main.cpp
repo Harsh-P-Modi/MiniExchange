@@ -49,7 +49,7 @@ int main() {
                     auto response = api->submit(cmd);
                     printer.print_response(response);
                 } else if constexpr (std::is_same_v<
-                                         T, miniexchange::cli::CancelRequest>) {
+                                         T, miniexchange::CancelRequest>) {
                     auto response = api->cancel(cmd.id);
                     printer.print_cancel_response(response, cmd.id);
                 } else if constexpr (std::is_same_v<

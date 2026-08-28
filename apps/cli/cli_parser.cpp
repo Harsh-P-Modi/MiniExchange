@@ -1,143 +1,89 @@
 #include "apps/cli/cli_parser.hpp"
 
-#include <charconv>
-#include <sstream>
 #include <string>
-#include <vector>
+#include <string_view>
+#include <variant>
+
+#include "adapters/text_protocol/text_protocol_parser.hpp"
 
 namespace miniexchange::cli {
 
 namespace {
 
-// Tokenize a line by whitespace. Returns empty vector for blank lines.
-std::vector<std::string> tokenize(const std::string& line) {
-    std::vector<std::string> tokens;
-    std::istringstream stream(line);
-    std::string token;
-    while (stream >> token) {
-        tokens.push_back(std::move(token));
+// Skip leading whitespace and return the first whitespace-delimited
+// token, or an empty view if the line is blank.
+std::string_view first_token(std::string_view line) {
+    std::size_t pos = 0;
+    while (pos < line.size() &&
+           (line[pos] == ' ' || line[pos] == '\t')) {
+        ++pos;
     }
-    return tokens;
+    if (pos >= line.size()) {
+        return {};
+    }
+    std::size_t start = pos;
+    while (pos < line.size() && line[pos] != ' ' && line[pos] != '\t') {
+        ++pos;
+    }
+    return line.substr(start, pos - start);
 }
 
-// Parse a side string ("BUY" or "SELL") into Side enum.
-// Returns true on success, false on failure.
-bool parse_side(const std::string& s, Side& out) {
-    if (s == "BUY") {
-        out = Side::Buy;
-        return true;
+// Check that the line contains exactly one token (no trailing args).
+bool is_single_token(std::string_view line) {
+    std::size_t pos = 0;
+    // Skip leading whitespace
+    while (pos < line.size() &&
+           (line[pos] == ' ' || line[pos] == '\t')) {
+        ++pos;
     }
-    if (s == "SELL") {
-        out = Side::Sell;
-        return true;
+    // Skip the token itself
+    while (pos < line.size() && line[pos] != ' ' && line[pos] != '\t') {
+        ++pos;
     }
-    return false;
-}
-
-// Parse a uint64 from a string using std::from_chars.
-// Returns true on success (entire string consumed, no overflow).
-bool parse_uint64(const std::string& s, uint64_t& out) {
-    if (s.empty()) {
-        return false;
+    // Skip trailing whitespace
+    while (pos < line.size() &&
+           (line[pos] == ' ' || line[pos] == '\t')) {
+        ++pos;
     }
-    auto result = std::from_chars(s.data(), s.data() + s.size(), out);
-    return result.ec == std::errc{} && result.ptr == s.data() + s.size();
-}
-
-// Parse a signed int64 from a string using std::from_chars.
-bool parse_int64(const std::string& s, int64_t& out) {
-    if (s.empty()) {
-        return false;
-    }
-    auto result = std::from_chars(s.data(), s.data() + s.size(), out);
-    return result.ec == std::errc{} && result.ptr == s.data() + s.size();
+    return pos >= line.size();
 }
 
 }  // namespace
 
 ParseResult CLIParser::parse(const std::string& line) const {
-    auto tokens = tokenize(line);
+    auto cmd = first_token(line);
 
-    if (tokens.empty()) {
-        return ParseError{"Empty command"};
-    }
-
-    const auto& cmd = tokens[0];
-
-    // QUIT
+    // CLI-only commands: intercept before delegating.
     if (cmd == "QUIT") {
-        if (tokens.size() != 1) {
+        if (!is_single_token(line)) {
             return ParseError{"QUIT takes no arguments"};
         }
         return QuitRequest{};
     }
 
-    // PRINT_BOOK
     if (cmd == "PRINT_BOOK") {
-        if (tokens.size() != 1) {
+        if (!is_single_token(line)) {
             return ParseError{"PRINT_BOOK takes no arguments"};
         }
         return PrintBookRequest{};
     }
 
-    // CANCEL <id>
-    if (cmd == "CANCEL") {
-        if (tokens.size() != 2) {
-            return ParseError{"Usage: CANCEL <id>"};
-        }
-        uint64_t id_val = 0;
-        if (!parse_uint64(tokens[1], id_val)) {
-            return ParseError{"Invalid order ID: " + tokens[1]};
-        }
-        return CancelRequest{OrderId{id_val}};
-    }
+    // Everything else: delegate to the shared text protocol parser.
+    auto result = text_protocol::parse(line);
 
-    // ADD <id> <BUY|SELL> <price> <qty>
-    if (cmd == "ADD") {
-        if (tokens.size() != 5) {
-            return ParseError{"Usage: ADD <id> <BUY|SELL> <price> <qty>"};
-        }
-        uint64_t id_val = 0;
-        if (!parse_uint64(tokens[1], id_val)) {
-            return ParseError{"Invalid order ID: " + tokens[1]};
-        }
-        Side side{};
-        if (!parse_side(tokens[2], side)) {
-            return ParseError{"Invalid side (expected BUY or SELL): " + tokens[2]};
-        }
-        int64_t price_val = 0;
-        if (!parse_int64(tokens[3], price_val)) {
-            return ParseError{"Invalid price: " + tokens[3]};
-        }
-        uint64_t qty_val = 0;
-        if (!parse_uint64(tokens[4], qty_val)) {
-            return ParseError{"Invalid quantity: " + tokens[4]};
-        }
-        return LimitOrder{OrderId{id_val}, side, Price{price_val},
-                          Quantity{qty_val}};
-    }
-
-    // MARKET <id> <BUY|SELL> <qty>
-    if (cmd == "MARKET") {
-        if (tokens.size() != 4) {
-            return ParseError{"Usage: MARKET <id> <BUY|SELL> <qty>"};
-        }
-        uint64_t id_val = 0;
-        if (!parse_uint64(tokens[1], id_val)) {
-            return ParseError{"Invalid order ID: " + tokens[1]};
-        }
-        Side side{};
-        if (!parse_side(tokens[2], side)) {
-            return ParseError{"Invalid side (expected BUY or SELL): " + tokens[2]};
-        }
-        uint64_t qty_val = 0;
-        if (!parse_uint64(tokens[3], qty_val)) {
-            return ParseError{"Invalid quantity: " + tokens[3]};
-        }
-        return MarketOrder{OrderId{id_val}, side, Quantity{qty_val}};
-    }
-
-    return ParseError{"Unknown command: " + cmd};
+    // Convert text_protocol::ParseResult into cli::ParseResult.
+    return std::visit(
+        [](auto&& val) -> ParseResult {
+            using T = std::decay_t<decltype(val)>;
+            if constexpr (std::is_same_v<T, text_protocol::ParseError>) {
+                return cli::ParseError{std::move(val.message)};
+            } else {
+                // LimitOrder, MarketOrder, CancelRequest pass through
+                // directly — they're the same types in both variants.
+                return val;
+            }
+        },
+        std::move(result));
 }
 
 }  // namespace miniexchange::cli

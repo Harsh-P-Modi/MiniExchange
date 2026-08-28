@@ -1,0 +1,5 @@
+if(EXISTS "C:/Users/harsh/Desktop/MiniExchange/build_check/workload_generator_test_e3b0c442_tests.cmake")
+  include("C:/Users/harsh/Desktop/MiniExchange/build_check/workload_generator_test_e3b0c442_tests.cmake")
+else()
+  add_test(workload_generator_test_NOT_BUILT workload_generator_test_NOT_BUILT)
+endif()

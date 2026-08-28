@@ -1,0 +1,5 @@
+if(EXISTS "C:/Users/harsh/Desktop/MiniExchange/build_check/core_trade_test_e3b0c442_tests.cmake")
+  include("C:/Users/harsh/Desktop/MiniExchange/build_check/core_trade_test_e3b0c442_tests.cmake")
+else()
+  add_test(core_trade_test_NOT_BUILT core_trade_test_NOT_BUILT)
+endif()
