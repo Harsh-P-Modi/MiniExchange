@@ -1,73 +1,46 @@
-add_test([=[IntegrationTest.SweepMultiLevelBookWithLargeCrossingOrder]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/response_routing_test.exe [==[--gtest_filter=IntegrationTest.SweepMultiLevelBookWithLargeCrossingOrder]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[IntegrationTest.SweepMultiLevelBookWithLargeCrossingOrder]=]
+add_test([=[ResponseRoutingTest.MultipleClientsGetOwnResponses]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/response_routing_test.exe [==[--gtest_filter=ResponseRoutingTest.MultipleClientsGetOwnResponses]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[ResponseRoutingTest.MultipleClientsGetOwnResponses]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/integration_test.cpp:53]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/response_routing_test.cpp:46]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
 )
-add_test([=[IntegrationTest.PartialFillThenCancelRemainder]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/response_routing_test.exe [==[--gtest_filter=IntegrationTest.PartialFillThenCancelRemainder]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[IntegrationTest.PartialFillThenCancelRemainder]=]
+add_test([=[ResponseRoutingTest.CrossTalkVerification]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/response_routing_test.exe [==[--gtest_filter=ResponseRoutingTest.CrossTalkVerification]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[ResponseRoutingTest.CrossTalkVerification]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/integration_test.cpp:146]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/response_routing_test.cpp:112]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
 )
-add_test([=[IntegrationTest.InterleavedLimitAndMarketOrders]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/response_routing_test.exe [==[--gtest_filter=IntegrationTest.InterleavedLimitAndMarketOrders]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[IntegrationTest.InterleavedLimitAndMarketOrders]=]
+add_test([=[ResponseRoutingTest.MixedCommandTypesRoutedCorrectly]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/response_routing_test.exe [==[--gtest_filter=ResponseRoutingTest.MixedCommandTypesRoutedCorrectly]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[ResponseRoutingTest.MixedCommandTypesRoutedCorrectly]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/integration_test.cpp:191]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/response_routing_test.cpp:159]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
 )
-add_test([=[IntegrationTest.FillBookCancelEverythingRefillAndSweep]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/response_routing_test.exe [==[--gtest_filter=IntegrationTest.FillBookCancelEverythingRefillAndSweep]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[IntegrationTest.FillBookCancelEverythingRefillAndSweep]=]
+add_test([=[ResponseRoutingTest.DisconnectedClientResponseDropped]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/response_routing_test.exe [==[--gtest_filter=ResponseRoutingTest.DisconnectedClientResponseDropped]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[ResponseRoutingTest.DisconnectedClientResponseDropped]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/integration_test.cpp:274]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/response_routing_test.cpp:227]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
 )
-add_test([=[IntegrationTest.SelfCrossingMultipleOrdersMatchNormally]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/response_routing_test.exe [==[--gtest_filter=IntegrationTest.SelfCrossingMultipleOrdersMatchNormally]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[IntegrationTest.SelfCrossingMultipleOrdersMatchNormally]=]
+add_test([=[ResponseRoutingTest.OwnerThreadsFromTaggedCommandToRestingOrder]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/response_routing_test.exe [==[--gtest_filter=ResponseRoutingTest.OwnerThreadsFromTaggedCommandToRestingOrder]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[ResponseRoutingTest.OwnerThreadsFromTaggedCommandToRestingOrder]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/integration_test.cpp:334]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/response_routing_test.cpp:283]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
 )
-add_test([=[IntegrationTest.BookAccessorConsistencyThroughLifecycle]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/response_routing_test.exe [==[--gtest_filter=IntegrationTest.BookAccessorConsistencyThroughLifecycle]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[IntegrationTest.BookAccessorConsistencyThroughLifecycle]=]
-  PROPERTIES
-    
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/integration_test.cpp:407]==]
-    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
-    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
-    
-)
-add_test([=[IntegrationTest.SamePriceLevelFIFOWithCancelsAndFills]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/response_routing_test.exe [==[--gtest_filter=IntegrationTest.SamePriceLevelFIFOWithCancelsAndFills]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[IntegrationTest.SamePriceLevelFIFOWithCancelsAndFills]=]
-  PROPERTIES
-    
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/integration_test.cpp:491]==]
-    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
-    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
-    
-)
-add_test([=[IntegrationTest.LargeScaleMarketSweepAfterPartialConsumption]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/response_routing_test.exe [==[--gtest_filter=IntegrationTest.LargeScaleMarketSweepAfterPartialConsumption]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[IntegrationTest.LargeScaleMarketSweepAfterPartialConsumption]=]
-  PROPERTIES
-    
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/integration_test.cpp:539]==]
-    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
-    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
-    
-)
-set(response_routing_test_TESTS [==[IntegrationTest.SweepMultiLevelBookWithLargeCrossingOrder]==] [==[IntegrationTest.PartialFillThenCancelRemainder]==] [==[IntegrationTest.InterleavedLimitAndMarketOrders]==] [==[IntegrationTest.FillBookCancelEverythingRefillAndSweep]==] [==[IntegrationTest.SelfCrossingMultipleOrdersMatchNormally]==] [==[IntegrationTest.BookAccessorConsistencyThroughLifecycle]==] [==[IntegrationTest.SamePriceLevelFIFOWithCancelsAndFills]==] [==[IntegrationTest.LargeScaleMarketSweepAfterPartialConsumption]==])
+set(response_routing_test_TESTS [==[ResponseRoutingTest.MultipleClientsGetOwnResponses]==] [==[ResponseRoutingTest.CrossTalkVerification]==] [==[ResponseRoutingTest.MixedCommandTypesRoutedCorrectly]==] [==[ResponseRoutingTest.DisconnectedClientResponseDropped]==] [==[ResponseRoutingTest.OwnerThreadsFromTaggedCommandToRestingOrder]==])

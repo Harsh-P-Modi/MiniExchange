@@ -47,19 +47,35 @@ call.**
 ## 3. `core/TaggedCommand.hpp` (new — the cross-thread message shapes)
 
 ```cpp
-// ClientId lives in core/Types.hpp (Phase 1's type list, extended here)
-using ClientId = uint64_t;
+// ClientId lives in core/Types.hpp (Phase 1's type list, extended here).
+// A strong wrapper struct, NOT a bare `using ClientId = uint64_t;` alias —
+// see the Open Questions resolution and ADR-006. A plain alias would let
+// ClientIds and OrderIds (also uint64_t-shaped) interchange unnoticed.
+struct ClientId {
+    uint64_t value;
+    constexpr ClientId() : value(0) {}
+    explicit constexpr ClientId(uint64_t v) : value(v) {}
+    // ==, != , plus a std::hash specialization for unordered_map keys.
+};
 
 struct TaggedCommand {
-    ClientId client_id;
+    ClientId client;
     EngineCommand command;   // Phase 4's core/EngineCommand.hpp
 };
 
 struct TaggedResponse {
-    ClientId client_id;
+    ClientId client;
     EngineResponse response;   // Phase 1's core/Events.hpp
 };
 ```
+
+> **Corrected in Phase 8 (T14).** An earlier draft of this section showed
+> `using ClientId = uint64_t;` and named the fields `client_id`. That was
+> never what shipped — the implementation uses the strong wrapper struct
+> above with fields named `client` (see `core/Types.hpp` and
+> `core/TaggedCommand.hpp`). The stale snippet was corrected while Phase 8
+> was consuming `ClientId` for self-trade prevention, so the spec matches
+> the code.
 
 ## 4. Two queues, not one
 
@@ -138,11 +154,16 @@ root, a different shape from either.
    (registering and draining an eventfd) than "just poll every 1ms."
    Worth it given this project's whole premise is caring about exactly
    this kind of latency/CPU-efficiency detail.
-2. **`ClientId` as a plain `uint64_t` type alias**, not a strong/opaque
-   type. Simpler; revisit only if it turns out to cause real confusion
-   with `OrderId` (also a `uint64_t`-shaped value) in practice —
-   flagging the risk rather than pre-solving it with a wrapper type
-   that might not be needed.
+2. **`ClientId` as a strong wrapper struct**, not a plain `uint64_t`
+   alias. Keeping it type-safe prevents `ClientId` and `OrderId` (also a
+   `uint64_t`-shaped value) from interchanging unnoticed, consistent with
+   the existing `OrderId`/`Price`/`Quantity`/`Sequence` convention. See
+   ADR-006.
+   *(Corrected in Phase 8 / T14: this item previously described the
+   opposite decision — a plain alias — which was an early draft that the
+   implementation never followed. Phase 8 threads `ClientId` into the
+   engine for self-trade prevention, and the strong type is exactly what
+   made that retrofit safe, so the record is now accurate.)*
 3. **Engine thread busy-spins on the inbound queue**, no yield/sleep
    when idle. Matches the "pin one instrument to one dedicated thread"
    HFT philosophy from the Charter, at the cost of burning a full CPU

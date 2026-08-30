@@ -2,7 +2,7 @@ add_test([=[PriceLevelTest.ConstructionSetsPrice]=]  C:/Users/harsh/Desktop/Mini
 set_tests_properties([=[PriceLevelTest.ConstructionSetsPrice]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:27]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:28]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
@@ -11,7 +11,7 @@ add_test([=[PriceLevelTest.NewLevelIsEmpty]=]  C:/Users/harsh/Desktop/MiniExchan
 set_tests_properties([=[PriceLevelTest.NewLevelIsEmpty]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:32]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:33]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
@@ -20,7 +20,7 @@ add_test([=[PriceLevelTest.PushBackSingleOrder]=]  C:/Users/harsh/Desktop/MiniEx
 set_tests_properties([=[PriceLevelTest.PushBackSingleOrder]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:41]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:42]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
@@ -29,7 +29,7 @@ add_test([=[PriceLevelTest.PushBackThreeOrdersFIFO]=]  C:/Users/harsh/Desktop/Mi
 set_tests_properties([=[PriceLevelTest.PushBackThreeOrdersFIFO]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:55]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:56]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
@@ -38,7 +38,7 @@ add_test([=[PriceLevelTest.RemoveMiddleOrder]=]  C:/Users/harsh/Desktop/MiniExch
 set_tests_properties([=[PriceLevelTest.RemoveMiddleOrder]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:87]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:88]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
@@ -47,7 +47,7 @@ add_test([=[PriceLevelTest.RemoveHeadOrder]=]  C:/Users/harsh/Desktop/MiniExchan
 set_tests_properties([=[PriceLevelTest.RemoveHeadOrder]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:118]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:119]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
@@ -56,7 +56,7 @@ add_test([=[PriceLevelTest.RemoveTailOrder]=]  C:/Users/harsh/Desktop/MiniExchan
 set_tests_properties([=[PriceLevelTest.RemoveTailOrder]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:146]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:147]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
@@ -65,7 +65,7 @@ add_test([=[PriceLevelTest.RemoveOnlyOrderMakesEmpty]=]  C:/Users/harsh/Desktop/
 set_tests_properties([=[PriceLevelTest.RemoveOnlyOrderMakesEmpty]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:174]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:175]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
@@ -74,7 +74,7 @@ add_test([=[PriceLevelTest.RemoveAllOrdersSequentially]=]  C:/Users/harsh/Deskto
 set_tests_properties([=[PriceLevelTest.RemoveAllOrdersSequentially]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:191]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:192]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
@@ -83,7 +83,7 @@ add_test([=[PriceLevelTest.TotalQuantityIsIncrementallyMaintained]=]  C:/Users/h
 set_tests_properties([=[PriceLevelTest.TotalQuantityIsIncrementallyMaintained]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:224]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:225]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
@@ -92,7 +92,7 @@ add_test([=[PriceLevelTest.PushAfterRemoveWorks]=]  C:/Users/harsh/Desktop/MiniE
 set_tests_properties([=[PriceLevelTest.PushAfterRemoveWorks]=]
   PROPERTIES
     
-    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:244]==]
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/price_level_test.cpp:245]==]
     WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     

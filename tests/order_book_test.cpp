@@ -9,8 +9,10 @@ namespace {
 Order make_order(uint64_t id, Side side, int64_t price,
                  uint64_t qty, uint64_t seq) {
     return Order{
-        OrderId{id}, side, Price{price}, Quantity{qty}, Sequence{seq},
-        nullptr, nullptr, nullptr};
+        .id = OrderId{id}, .side = side, .price = Price{price},
+        .quantity = Quantity{qty}, .sequence = Sequence{seq},
+        // owner defaults to ClientId{0}.
+        .prev = nullptr, .next = nullptr, .level = nullptr};
 }
 
 // --- best_bid tests ---

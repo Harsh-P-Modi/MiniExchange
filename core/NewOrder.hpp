@@ -10,21 +10,33 @@ namespace miniexchange {
 // Structurally identical to the resting Order (minus sequence/pointers,
 // which the engine assigns), but kept as a separate type to distinguish
 // "what the client submits" from "what rests on the book."
+//
+// owner (Phase 8): the ClientId of the submitter. Threaded down to the
+// resting Order so the engine can detect self-trades (STP, R5). Declared
+// as a defaulted trailing field so existing positional aggregate
+// initializations (LimitOrder{id, side, price, qty}) remain valid and
+// default owner to ClientId{0}; only ownership-aware callers (the TCP
+// adapter) set it explicitly. See docs/LEARNING.md Phase 8.
 struct LimitOrder {
     OrderId id;
     Side side;
     Price price;
     Quantity quantity;
+    ClientId owner{};
 };
 
 // MarketOrder — input representation of a market order submission.
 // Critically: no price field. This makes "a market order with a price"
 // compile-time-impossible, not just a runtime validation error.
 // Requirements R4/R11 become structural guarantees rather than checks.
+//
+// owner (Phase 8): see LimitOrder above — same rationale, same defaulted
+// trailing-field treatment.
 struct MarketOrder {
     OrderId id;
     Side side;
     Quantity quantity;  // no price — structurally enforced
+    ClientId owner{};
 };
 
 // NewOrder — the discriminated union passed to EngineAPI::submit.

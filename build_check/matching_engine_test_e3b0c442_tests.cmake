@@ -421,6 +421,42 @@ set_tests_properties([=[MatchingEngineTest.CancelRejectionNoEvents]=]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
 )
+add_test([=[MatchingEngineTest.RestingOrderRetainsSubmitterOwner]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/matching_engine_test.exe [==[--gtest_filter=MatchingEngineTest.RestingOrderRetainsSubmitterOwner]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[MatchingEngineTest.RestingOrderRetainsSubmitterOwner]=]
+  PROPERTIES
+    
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/matching_engine_test.cpp:960]==]
+    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
+    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
+    
+)
+add_test([=[MatchingEngineTest.PartiallyFilledRemainderRetainsOwner]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/matching_engine_test.exe [==[--gtest_filter=MatchingEngineTest.PartiallyFilledRemainderRetainsOwner]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[MatchingEngineTest.PartiallyFilledRemainderRetainsOwner]=]
+  PROPERTIES
+    
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/matching_engine_test.cpp:972]==]
+    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
+    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
+    
+)
+add_test([=[MatchingEngineTest.RestingOrderDefaultsOwnerToZeroWhenUnset]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/matching_engine_test.exe [==[--gtest_filter=MatchingEngineTest.RestingOrderDefaultsOwnerToZeroWhenUnset]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[MatchingEngineTest.RestingOrderDefaultsOwnerToZeroWhenUnset]=]
+  PROPERTIES
+    
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/matching_engine_test.cpp:991]==]
+    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
+    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
+    
+)
+add_test([=[MatchingEngineTest.StpDisabledSelfCrossTradesNormally]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/matching_engine_test.exe [==[--gtest_filter=MatchingEngineTest.StpDisabledSelfCrossTradesNormally]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[MatchingEngineTest.StpDisabledSelfCrossTradesNormally]=]
+  PROPERTIES
+    
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/matching_engine_test.cpp:1184]==]
+    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
+    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
+    
+)
 add_test([=[MatchingEngineNullSinkTest.WorksWithDefaultNullSink]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/matching_engine_test.exe [==[--gtest_filter=MatchingEngineNullSinkTest.WorksWithDefaultNullSink]==] --gtest_also_run_disabled_tests)
 set_tests_properties([=[MatchingEngineNullSinkTest.WorksWithDefaultNullSink]=]
   PROPERTIES
@@ -430,4 +466,76 @@ set_tests_properties([=[MatchingEngineNullSinkTest.WorksWithDefaultNullSink]=]
     SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
     
 )
-set(matching_engine_test_TESTS [==[MatchingEngineTest.LimitBuyRestsOnEmptyBook]==] [==[MatchingEngineTest.LimitSellRestsOnEmptyBook]==] [==[MatchingEngineTest.NonCrossingLimitOrdersRestOnBothSides]==] [==[MatchingEngineTest.DuplicateOrderIdRejected]==] [==[MatchingEngineTest.DuplicateIdRejectedEvenAfterFullFill]==] [==[MatchingEngineTest.ZeroQuantityRejected]==] [==[MatchingEngineTest.ZeroPriceRejected]==] [==[MatchingEngineTest.NegativePriceRejected]==] [==[MatchingEngineTest.OrderAcceptedEventEmittedOnSuccess]==] [==[MatchingEngineTest.NoEventOnRejection]==] [==[MatchingEngineTest.CrossingSellFullyFillsRestingBuy]==] [==[MatchingEngineTest.CrossingBuyFullyFillsRestingSell]==] [==[MatchingEngineTest.PartialFillRestsRemainder]==] [==[MatchingEngineTest.PartialFillOfRestingOrder]==] [==[MatchingEngineTest.TradeAtRestingOrderPrice]==] [==[MatchingEngineTest.EventSinkReceivesOnTradePerFill]==] [==[MatchingEngineTest.CrossingMultipleLevels]==] [==[MatchingEngineTest.SellAboveBestBidDoesNotCross]==] [==[MatchingEngineTest.BuyBelowBestAskDoesNotCross]==] [==[MatchingEngineTest.SequenceCounterIncrements]==] [==[MatchingEngineTest.TradeSequenceCounterIncrements]==] [==[MatchingEngineTest.FIFOMatchingWithinLevel]==] [==[MatchingEngineTest.FIFOPartialFillThirdOrderAtSamePrice]==] [==[MatchingEngineTest.TradeSequenceStrictlyIncreasingWithinSubmission]==] [==[MatchingEngineTest.EventSinkOnTradeOrderMatchesEngineResponse]==] [==[MatchingEngineTest.PriceTimePrioritySweepsLevelsInOrder]==] [==[MatchingEngineTest.FIFOWithinLevelRespectedForMultipleOrders]==] [==[MatchingEngineTest.SelfCrossingMatchesNormally]==] [==[MatchingEngineTest.MarketBuyFullyFillsAvailableSells]==] [==[MatchingEngineTest.MarketSellFullyFillsAvailableBuys]==] [==[MatchingEngineTest.MarketBuyOnEmptyBookNoFills]==] [==[MatchingEngineTest.MarketSellOnEmptyBookNoFills]==] [==[MatchingEngineTest.MarketBuyPartialFillDoesNotRest]==] [==[MatchingEngineTest.MarketSellPartialFillDoesNotRest]==] [==[MatchingEngineTest.MarketOrderDuplicateIdRejected]==] [==[MatchingEngineTest.MarketOrderZeroQuantityRejected]==] [==[MatchingEngineTest.MarketOrderEmitsAcceptedAndTradeEvents]==] [==[MatchingEngineTest.MarketOrderRejectionNoEvents]==] [==[MatchingEngineTest.MarketOrderFullSweepEmptiesOppositeSide]==] [==[MatchingEngineTest.MarketOrderDispatchesViaVariant]==] [==[MatchingEngineTest.CancelRestingOrderSucceeds]==] [==[MatchingEngineTest.CancelPartiallyFilledOrderReportsCorrectRemaining]==] [==[MatchingEngineTest.CancelUnknownIdReturnsUnknownOrderId]==] [==[MatchingEngineTest.CancelAlreadyFilledOrderReturnsUnknownOrderId]==] [==[MatchingEngineTest.DoubleCancelReturnsUnknownOrderId]==] [==[MatchingEngineTest.CancelDecrementsOrderCountAndRemovesFromLookup]==] [==[MatchingEngineTest.CancelRejectionNoEvents]==] [==[MatchingEngineNullSinkTest.WorksWithDefaultNullSink]==])
+add_test([=[StpRejectTest.SameOwnerCrossRejectedWithNoSideEffects]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/matching_engine_test.exe [==[--gtest_filter=StpRejectTest.SameOwnerCrossRejectedWithNoSideEffects]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[StpRejectTest.SameOwnerCrossRejectedWithNoSideEffects]=]
+  PROPERTIES
+    
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/matching_engine_test.cpp:1029]==]
+    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
+    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
+    
+)
+add_test([=[StpRejectTest.RejectedOrderIdNotConsumed]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/matching_engine_test.exe [==[--gtest_filter=StpRejectTest.RejectedOrderIdNotConsumed]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[StpRejectTest.RejectedOrderIdNotConsumed]=]
+  PROPERTIES
+    
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/matching_engine_test.cpp:1056]==]
+    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
+    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
+    
+)
+add_test([=[StpRejectTest.DifferentOwnerCrossProceeds]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/matching_engine_test.exe [==[--gtest_filter=StpRejectTest.DifferentOwnerCrossProceeds]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[StpRejectTest.DifferentOwnerCrossProceeds]=]
+  PROPERTIES
+    
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/matching_engine_test.cpp:1071]==]
+    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
+    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
+    
+)
+add_test([=[StpRejectTest.SameOwnerNonCrossingRestsNormally]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/matching_engine_test.exe [==[--gtest_filter=StpRejectTest.SameOwnerNonCrossingRestsNormally]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[StpRejectTest.SameOwnerNonCrossingRestsNormally]=]
+  PROPERTIES
+    
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/matching_engine_test.cpp:1084]==]
+    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
+    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
+    
+)
+add_test([=[StpRejectTest.SameOwnerMarketCrossRejected]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/matching_engine_test.exe [==[--gtest_filter=StpRejectTest.SameOwnerMarketCrossRejected]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[StpRejectTest.SameOwnerMarketCrossRejected]=]
+  PROPERTIES
+    
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/matching_engine_test.cpp:1096]==]
+    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
+    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
+    
+)
+add_test([=[StpRejectTest.RejectsWhenSameOwnerRestsBehindOtherOwnerAtCrossablePrice]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/matching_engine_test.exe [==[--gtest_filter=StpRejectTest.RejectsWhenSameOwnerRestsBehindOtherOwnerAtCrossablePrice]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[StpRejectTest.RejectsWhenSameOwnerRestsBehindOtherOwnerAtCrossablePrice]=]
+  PROPERTIES
+    
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/matching_engine_test.cpp:1108]==]
+    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
+    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
+    
+)
+add_test([=[StpCancelTest.SameOwnerRestingCancelledIncomingProceeds]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/matching_engine_test.exe [==[--gtest_filter=StpCancelTest.SameOwnerRestingCancelledIncomingProceeds]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[StpCancelTest.SameOwnerRestingCancelledIncomingProceeds]=]
+  PROPERTIES
+    
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/matching_engine_test.cpp:1132]==]
+    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
+    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
+    
+)
+add_test([=[StpCancelTest.CancelsOwnRestingButTradesWithOthers]=]  C:/Users/harsh/Desktop/MiniExchange/build_check/matching_engine_test.exe [==[--gtest_filter=StpCancelTest.CancelsOwnRestingButTradesWithOthers]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[StpCancelTest.CancelsOwnRestingButTradesWithOthers]=]
+  PROPERTIES
+    
+    DEF_SOURCE_LINE [==[C:/Users/harsh/Desktop/MiniExchange/tests/matching_engine_test.cpp:1158]==]
+    WORKING_DIRECTORY [==[C:/Users/harsh/Desktop/MiniExchange/build_check]==]
+    SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==]
+    
+)
+set(matching_engine_test_TESTS [==[MatchingEngineTest.LimitBuyRestsOnEmptyBook]==] [==[MatchingEngineTest.LimitSellRestsOnEmptyBook]==] [==[MatchingEngineTest.NonCrossingLimitOrdersRestOnBothSides]==] [==[MatchingEngineTest.DuplicateOrderIdRejected]==] [==[MatchingEngineTest.DuplicateIdRejectedEvenAfterFullFill]==] [==[MatchingEngineTest.ZeroQuantityRejected]==] [==[MatchingEngineTest.ZeroPriceRejected]==] [==[MatchingEngineTest.NegativePriceRejected]==] [==[MatchingEngineTest.OrderAcceptedEventEmittedOnSuccess]==] [==[MatchingEngineTest.NoEventOnRejection]==] [==[MatchingEngineTest.CrossingSellFullyFillsRestingBuy]==] [==[MatchingEngineTest.CrossingBuyFullyFillsRestingSell]==] [==[MatchingEngineTest.PartialFillRestsRemainder]==] [==[MatchingEngineTest.PartialFillOfRestingOrder]==] [==[MatchingEngineTest.TradeAtRestingOrderPrice]==] [==[MatchingEngineTest.EventSinkReceivesOnTradePerFill]==] [==[MatchingEngineTest.CrossingMultipleLevels]==] [==[MatchingEngineTest.SellAboveBestBidDoesNotCross]==] [==[MatchingEngineTest.BuyBelowBestAskDoesNotCross]==] [==[MatchingEngineTest.SequenceCounterIncrements]==] [==[MatchingEngineTest.TradeSequenceCounterIncrements]==] [==[MatchingEngineTest.FIFOMatchingWithinLevel]==] [==[MatchingEngineTest.FIFOPartialFillThirdOrderAtSamePrice]==] [==[MatchingEngineTest.TradeSequenceStrictlyIncreasingWithinSubmission]==] [==[MatchingEngineTest.EventSinkOnTradeOrderMatchesEngineResponse]==] [==[MatchingEngineTest.PriceTimePrioritySweepsLevelsInOrder]==] [==[MatchingEngineTest.FIFOWithinLevelRespectedForMultipleOrders]==] [==[MatchingEngineTest.SelfCrossingMatchesNormally]==] [==[MatchingEngineTest.MarketBuyFullyFillsAvailableSells]==] [==[MatchingEngineTest.MarketSellFullyFillsAvailableBuys]==] [==[MatchingEngineTest.MarketBuyOnEmptyBookNoFills]==] [==[MatchingEngineTest.MarketSellOnEmptyBookNoFills]==] [==[MatchingEngineTest.MarketBuyPartialFillDoesNotRest]==] [==[MatchingEngineTest.MarketSellPartialFillDoesNotRest]==] [==[MatchingEngineTest.MarketOrderDuplicateIdRejected]==] [==[MatchingEngineTest.MarketOrderZeroQuantityRejected]==] [==[MatchingEngineTest.MarketOrderEmitsAcceptedAndTradeEvents]==] [==[MatchingEngineTest.MarketOrderRejectionNoEvents]==] [==[MatchingEngineTest.MarketOrderFullSweepEmptiesOppositeSide]==] [==[MatchingEngineTest.MarketOrderDispatchesViaVariant]==] [==[MatchingEngineTest.CancelRestingOrderSucceeds]==] [==[MatchingEngineTest.CancelPartiallyFilledOrderReportsCorrectRemaining]==] [==[MatchingEngineTest.CancelUnknownIdReturnsUnknownOrderId]==] [==[MatchingEngineTest.CancelAlreadyFilledOrderReturnsUnknownOrderId]==] [==[MatchingEngineTest.DoubleCancelReturnsUnknownOrderId]==] [==[MatchingEngineTest.CancelDecrementsOrderCountAndRemovesFromLookup]==] [==[MatchingEngineTest.CancelRejectionNoEvents]==] [==[MatchingEngineTest.RestingOrderRetainsSubmitterOwner]==] [==[MatchingEngineTest.PartiallyFilledRemainderRetainsOwner]==] [==[MatchingEngineTest.RestingOrderDefaultsOwnerToZeroWhenUnset]==] [==[MatchingEngineTest.StpDisabledSelfCrossTradesNormally]==] [==[MatchingEngineNullSinkTest.WorksWithDefaultNullSink]==] [==[StpRejectTest.SameOwnerCrossRejectedWithNoSideEffects]==] [==[StpRejectTest.RejectedOrderIdNotConsumed]==] [==[StpRejectTest.DifferentOwnerCrossProceeds]==] [==[StpRejectTest.SameOwnerNonCrossingRestsNormally]==] [==[StpRejectTest.SameOwnerMarketCrossRejected]==] [==[StpRejectTest.RejectsWhenSameOwnerRestsBehindOtherOwnerAtCrossablePrice]==] [==[StpCancelTest.SameOwnerRestingCancelledIncomingProceeds]==] [==[StpCancelTest.CancelsOwnRestingButTradesWithOthers]==])

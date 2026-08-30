@@ -10,14 +10,15 @@ namespace {
 // (it only uses quantity for total_qty_ tracking).
 Order make_order(uint64_t id, uint64_t qty, uint64_t seq) {
     Order o{
-        OrderId{id},
-        Side::Buy,
-        Price{10000},
-        Quantity{qty},
-        Sequence{seq},
-        nullptr,
-        nullptr,
-        nullptr
+        .id = OrderId{id},
+        .side = Side::Buy,
+        .price = Price{10000},
+        .quantity = Quantity{qty},
+        .sequence = Sequence{seq},
+        // owner defaults to ClientId{0}; PriceLevel doesn't read it.
+        .prev = nullptr,
+        .next = nullptr,
+        .level = nullptr,
     };
     return o;
 }

@@ -45,7 +45,10 @@
 #include "core/EngineCommand.hpp"
 #include "core/TaggedCommand.hpp"
 #include "engine/matching_engine.hpp"
+#include "interfaces/engine_api.hpp"
 #include "lockfree_queue/spsc_ring_buffer.hpp"
+#include "risk/risk_config.hpp"
+#include "risk/risk_engine.hpp"
 
 // --- Global shutdown state ---
 // Accessed from signal handler + engine thread + (indirectly) I/O thread.
@@ -158,8 +161,30 @@ int main(int argc, char* argv[]) {
     miniexchange::udp::UdpFeedPublisher feed_publisher(
         kSymbol, {sub}, udp_fd, 500 /* snapshot every 500 messages */);
 
-    // --- Construct engine with UDP feed publisher as EventSink ---
-    MatchingEngine engine(&feed_publisher);
+    // --- Construct engine + risk layer (Phase 8) ---
+    // RiskConfig is the single composition-root risk configuration. Its
+    // STP slice is passed down into the engine (STP executes inside the
+    // match loop — see specs/phase-08-risk-engine/design.md §5); the
+    // three pre-trade checks (fat-finger, tick-size, price-band) run in
+    // the RiskEngine decorator that wraps the engine.
+    RiskConfig risk_config{};
+    risk_config.price_band_pct = 0.10;                  // +/-10% band
+    risk_config.initial_reference_price = Price{10000};  // Q4 cold-start seed
+    risk_config.max_order_qty = Quantity{1'000'000};     // fat-finger ceiling
+    risk_config.tick_size = Price{1};
+    risk_config.stp_enabled = true;
+    risk_config.stp_policy = StpPolicy::RejectIncoming;
+
+    MatchingEngine matching_engine(&feed_publisher, 1'000'000,
+                                   risk_config.stp());
+
+    // The decorator is the ONLY entry point the rest of the app uses.
+    // Everything downstream is typed as EngineAPI&, so nothing can
+    // accidentally bypass the risk checks by calling the concrete engine
+    // directly — the single-entry-point constraint design.md §7 relies on
+    // for NFR2.
+    RiskEngine risk_engine(&matching_engine, risk_config);
+    EngineAPI& engine = risk_engine;
 
     // --- Construct SPSC queues ---
     // Inbound: I/O thread (producer) → engine thread (consumer)
@@ -234,11 +259,17 @@ int main(int argc, char* argv[]) {
         }
 
         // Dispatch to engine via std::visit on the EngineCommand variant.
+        // Phase 8: tag the order with the submitting connection's ClientId
+        // (cmd.client) before handing it to the engine, so the resting
+        // order records its owner for self-trade prevention (R5). Before
+        // this, cmd.client was only used for response routing and the
+        // engine never saw who submitted an order.
         EngineResponse resp = std::visit(
-            [&engine](auto& command) -> EngineResponse {
+            [&engine, &cmd](auto& command) -> EngineResponse {
                 using T = std::decay_t<decltype(command)>;
                 if constexpr (std::is_same_v<T, LimitOrder> ||
                               std::is_same_v<T, MarketOrder>) {
+                    command.owner = cmd.client;
                     return engine.submit(command);
                 } else {
                     static_assert(std::is_same_v<T, CancelRequest>);

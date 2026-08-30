@@ -22,6 +22,14 @@ const char* ConsolePrinter::result_to_string(EngineResult result) {
             return "REJECTED: InvalidPrice";
         case EngineResult::PoolExhausted:
             return "REJECTED: PoolExhausted";
+        case EngineResult::SelfTradePrevented:
+            return "REJECTED: SelfTradePrevented";
+        case EngineResult::PriceOutOfBand:
+            return "REJECTED: PriceOutOfBand";
+        case EngineResult::QuantityTooLarge:
+            return "REJECTED: QuantityTooLarge";
+        case EngineResult::TickSizeMisaligned:
+            return "REJECTED: TickSizeMisaligned";
     }
     return "UNKNOWN";
 }

@@ -65,13 +65,19 @@ namespace {
 // See Message.hpp RejectMsg comment for the mapping.
 uint8_t engine_result_to_reason_code(EngineResult result) {
     switch (result) {
-        case EngineResult::DuplicateOrderId: return 1;
-        case EngineResult::UnknownOrderId:   return 2;
-        case EngineResult::InvalidQuantity:  return 3;
-        case EngineResult::InvalidPrice:     return 4;
-        case EngineResult::PoolExhausted:    return 5;
-        default:                             return 0;  // shouldn't happen
+        case EngineResult::DuplicateOrderId:   return 1;
+        case EngineResult::UnknownOrderId:     return 2;
+        case EngineResult::InvalidQuantity:    return 3;
+        case EngineResult::InvalidPrice:       return 4;
+        case EngineResult::PoolExhausted:      return 5;
+        // Phase 8 risk / STP rejections.
+        case EngineResult::SelfTradePrevented: return 6;
+        case EngineResult::PriceOutOfBand:     return 7;
+        case EngineResult::QuantityTooLarge:   return 8;
+        case EngineResult::TickSizeMisaligned: return 9;
+        case EngineResult::Accepted:           return 0;  // not a rejection
     }
+    return 0;
 }
 
 // Encode a single message into a std::string of raw bytes.

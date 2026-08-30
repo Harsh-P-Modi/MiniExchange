@@ -1,25 +1,35 @@
 {
-  "tests": 3,
+  "tests": 5,
   "name": "AllTests",
   "testsuites": [
     {
-      "name": "PublisherE2ETest",
-      "tests": 3,
+      "name": "ResponseRoutingTest",
+      "tests": 5,
       "testsuite": [
         {
-          "name": "FullScriptedSequence",
-          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/udp_publisher_e2e_test.cpp",
-          "line": 88
+          "name": "MultipleClientsGetOwnResponses",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/response_routing_test.cpp",
+          "line": 46
         },
         {
-          "name": "SequenceIsMonotonicAcrossAllMessages",
-          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/udp_publisher_e2e_test.cpp",
-          "line": 172
+          "name": "CrossTalkVerification",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/response_routing_test.cpp",
+          "line": 112
         },
         {
-          "name": "SnapshotReflectsEngineState",
-          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/udp_publisher_e2e_test.cpp",
-          "line": 188
+          "name": "MixedCommandTypesRoutedCorrectly",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/response_routing_test.cpp",
+          "line": 159
+        },
+        {
+          "name": "DisconnectedClientResponseDropped",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/response_routing_test.cpp",
+          "line": 227
+        },
+        {
+          "name": "OwnerThreadsFromTaggedCommandToRestingOrder",
+          "file": "C:\/Users\/harsh\/Desktop\/MiniExchange\/tests\/response_routing_test.cpp",
+          "line": 283
         }
       ]
     }

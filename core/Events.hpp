@@ -22,6 +22,18 @@ enum class EngineResult {
                        // carry no price per the NewOrder variant shape)
     PoolExhausted,     // no free slots in the order pool — reject before
                        // any side effects (Phase 3, requirements.md R4)
+    SelfTradePrevented,  // (Phase 8, R5) incoming order would cross a
+                         // resting order owned by the same ClientId, and
+                         // STP policy is RejectIncoming — rejected before
+                         // any mutation, so no OrderId is consumed
+
+    // Phase 8 pre-trade risk rejections (R6). Each rule gets its own
+    // value so a client can tell "your price is out of band" from "your
+    // tick size is wrong" from "your order is too big". Named after the
+    // reason, un-prefixed, matching the convention of the values above.
+    PriceOutOfBand,      // R2 — price deviates beyond the configured band
+    QuantityTooLarge,    // R3 — quantity exceeds the fat-finger ceiling
+    TickSizeMisaligned,  // R4 — price is not a multiple of the tick size
 };
 
 // EngineResponse — the synchronous return value from EngineAPI::submit

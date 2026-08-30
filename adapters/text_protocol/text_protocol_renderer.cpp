@@ -20,6 +20,14 @@ const char* result_to_string(EngineResult result) {
             return "InvalidPrice";
         case EngineResult::PoolExhausted:
             return "PoolExhausted";
+        case EngineResult::SelfTradePrevented:
+            return "SelfTradePrevented";
+        case EngineResult::PriceOutOfBand:
+            return "PriceOutOfBand";
+        case EngineResult::QuantityTooLarge:
+            return "QuantityTooLarge";
+        case EngineResult::TickSizeMisaligned:
+            return "TickSizeMisaligned";
     }
     return "Unknown";
 }

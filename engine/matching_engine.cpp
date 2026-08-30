@@ -5,8 +5,9 @@
 
 namespace miniexchange {
 
-MatchingEngine::MatchingEngine(EventSink* sink, std::size_t pool_capacity)
-    : book_(pool_capacity), sink_(sink) {}
+MatchingEngine::MatchingEngine(EventSink* sink, std::size_t pool_capacity,
+                               StpConfig stp)
+    : book_(pool_capacity), sink_(sink), stp_(stp) {}
 
 EngineResponse MatchingEngine::submit(const NewOrder& order) {
     return std::visit(
@@ -66,6 +67,17 @@ EngineResponse MatchingEngine::submit_limit(const LimitOrder& order) {
         return EngineResponse{EngineResult::DuplicateOrderId, {}, Quantity{0}};
     }
 
+    // Phase 8 R5 — self-trade prevention, RejectIncoming policy.
+    // Pre-scan BEFORE any mutation (no ID recorded, no event, no fill):
+    // if this order would cross a resting order of the same owner, reject
+    // it now. This preserves NFR2 — a rejected order consumes no OrderId.
+    // CancelResting is handled inside the match loop instead (below).
+    if (stp_.enabled && stp_.policy == StpPolicy::RejectIncoming &&
+        would_self_cross(order.side, order.owner, order.price)) {
+        return EngineResponse{EngineResult::SelfTradePrevented, {},
+                              Quantity{0}};
+    }
+
     // R4 (Phase 3): reject if pool exhausted — before any side effects.
     // Pre-checking guarantees that if matching leaves a remainder, at least
     // one slot is available to rest it. Matching can only release slots
@@ -85,7 +97,7 @@ EngineResponse MatchingEngine::submit_limit(const LimitOrder& order) {
     // Perform matching against opposite side (R5-R8).
     Quantity remaining = order.quantity;
     std::vector<Trade> trades = match_against_book(
-        order.side, order.id, remaining, order.price);
+        order.side, order.id, order.owner, remaining, order.price);
 
     // If there's remaining quantity after matching, rest on the book (R8).
     if (remaining > Quantity{0}) {
@@ -95,6 +107,8 @@ EngineResponse MatchingEngine::submit_limit(const LimitOrder& order) {
             .price = order.price,
             .quantity = remaining,
             .sequence = next_sequence_++,
+            .owner = order.owner,  // Phase 8: carry submitter identity onto
+                                   // the resting order for STP (R5).
             .prev = nullptr,
             .next = nullptr,
             .level = nullptr,
@@ -116,6 +130,16 @@ EngineResponse MatchingEngine::submit_market(const MarketOrder& order) {
         return EngineResponse{EngineResult::DuplicateOrderId, {}, Quantity{0}};
     }
 
+    // Phase 8 R5 — self-trade prevention, RejectIncoming policy.
+    // Pre-scan before any mutation (see submit_limit). A market order has
+    // no price ceiling, so it would cross every available level — scan
+    // all of them for a same-owner resting order.
+    if (stp_.enabled && stp_.policy == StpPolicy::RejectIncoming &&
+        would_self_cross(order.side, order.owner, std::nullopt)) {
+        return EngineResponse{EngineResult::SelfTradePrevented, {},
+                              Quantity{0}};
+    }
+
     // Accept the order: record the ID as ever-seen.
     ever_seen_ids_.insert(order.id);
 
@@ -127,7 +151,7 @@ EngineResponse MatchingEngine::submit_market(const MarketOrder& order) {
     // std::nullopt means the market order crosses all available levels.
     Quantity remaining = order.quantity;
     std::vector<Trade> trades = match_against_book(
-        order.side, order.id, remaining, std::nullopt);
+        order.side, order.id, order.owner, remaining, std::nullopt);
 
     // R10: Market orders NEVER rest on the book. Any unfilled remainder
     // is simply discarded (reported in remaining_qty but not added to
@@ -136,9 +160,12 @@ EngineResponse MatchingEngine::submit_market(const MarketOrder& order) {
 }
 
 std::vector<Trade> MatchingEngine::match_against_book(
-    Side incoming_side, OrderId incoming_id, Quantity& remaining,
-    std::optional<Price> limit_price) {
+    Side incoming_side, OrderId incoming_id, ClientId incoming_owner,
+    Quantity& remaining, std::optional<Price> limit_price) {
     std::vector<Trade> trades;
+
+    const bool stp_cancel_resting =
+        stp_.enabled && stp_.policy == StpPolicy::CancelResting;
 
     while (remaining > Quantity{0}) {
         // Get the best opposite-side level.
@@ -168,6 +195,36 @@ std::vector<Trade> MatchingEngine::match_against_book(
         // Match against orders at this level in FIFO order.
         while (remaining > Quantity{0} && !level->empty()) {
             Order* resting = level->front();
+
+            // Phase 8 R5 — self-trade prevention, CancelResting policy.
+            // If this resting order belongs to the same owner as the
+            // incoming order, pull it from the book (emitting
+            // on_order_cancelled) instead of trading against it, then
+            // continue matching against the next order at this level.
+            // Note: the pre-scan in submit_limit/submit_market handles the
+            // RejectIncoming policy before we ever reach here, so this
+            // branch only fires for CancelResting.
+            if (stp_cancel_resting && resting->owner == incoming_owner) {
+                OrderId cancelled_id = resting->id;
+                Quantity cancelled_remaining = resting->quantity;
+                Side cancelled_side = resting->side;
+                Price cancelled_price = resting->price;
+
+                // remove_order unlinks from the level and, if the level
+                // becomes empty, erases it from the price tree — which
+                // DESTROYS the PriceLevel (it's a value in the std::map,
+                // see OrderBook::remove_order). So after this call `level`
+                // may be dangling; we must not touch it again. Break out
+                // of the inner loop and let the outer loop re-fetch the
+                // new best level via best_ask()/best_bid(). Re-fetch is
+                // O(1) (map::begin), so this is cheap and always safe
+                // whether or not the level survived.
+                book_.remove_order(resting);
+                sink_->on_order_cancelled(OrderCancelled{
+                    cancelled_id, cancelled_remaining, cancelled_side,
+                    cancelled_price});
+                break;
+            }
 
             // Determine fill quantity: min(remaining, resting quantity).
             Quantity fill_qty = (remaining < resting->quantity)
@@ -223,6 +280,52 @@ std::vector<Trade> MatchingEngine::match_against_book(
     }
 
     return trades;
+}
+
+bool MatchingEngine::would_self_cross(
+    Side incoming_side, ClientId incoming_owner,
+    std::optional<Price> limit_price) const {
+    // Walk the OPPOSITE side from the best price. A buy crosses asks
+    // (ascending); a sell crosses bids (descending). We reuse the const
+    // price trees rather than best_ask()/best_bid() (which are non-const)
+    // so this stays a pure read — no mutation, safe to call before the
+    // engine records the OrderId or emits any event (NFR2).
+    //
+    // For each crossable level, scan its FIFO queue via the intrusive
+    // Order::next chain for a resting order owned by incoming_owner.
+    auto scan_level = [&](const PriceLevel& level) -> bool {
+        for (const Order* o = level.front(); o != nullptr; o = o->next) {
+            if (o->owner == incoming_owner) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    if (incoming_side == Side::Buy) {
+        // Cross asks: lowest price first. Stop once level price exceeds
+        // the limit (nullopt = market order: no ceiling, scan all).
+        for (const auto& [price, level] : book_.asks()) {
+            if (limit_price.has_value() && limit_price.value() < price) {
+                break;  // can't cross this or any higher ask
+            }
+            if (scan_level(level)) {
+                return true;
+            }
+        }
+    } else {
+        // Cross bids: highest price first. Stop once level price drops
+        // below the limit (nullopt = market order: no floor, scan all).
+        for (const auto& [price, level] : book_.bids()) {
+            if (limit_price.has_value() && limit_price.value() > price) {
+                break;  // can't cross this or any lower bid
+            }
+            if (scan_level(level)) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 }  // namespace miniexchange

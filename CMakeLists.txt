@@ -74,6 +74,14 @@ target_link_libraries(orderbook PRIVATE miniexchange_warnings)
 add_library(engine engine/matching_engine.cpp)
 target_link_libraries(engine PUBLIC orderbook PRIVATE miniexchange_warnings)
 
+# Pre-trade risk layer (Phase 8). Depends on interfaces/ + core/ only —
+# it decorates EngineAPI and never references MatchingEngine directly.
+# Links `engine` publicly only so consumers get OrderBook's definition
+# via EngineAPI::book(); the risk sources themselves include no engine
+# headers.
+add_library(risk risk/risk_engine.cpp)
+target_link_libraries(risk PUBLIC orderbook PRIVATE miniexchange_warnings)
+
 # Tests
 add_executable(core_types_test tests/core_types_test.cpp)
 target_link_libraries(core_types_test PRIVATE GTest::gtest_main miniexchange_warnings)
@@ -124,6 +132,46 @@ gtest_discover_tests(edge_case_test)
 
 add_executable(pool_exhaustion_test tests/pool_exhaustion_test.cpp)
 target_link_libraries(pool_exhaustion_test PRIVATE GTest::gtest_main engine miniexchange_warnings)
+
+# Phase 8: RiskEngine decorator tests (fat-finger, tick-size, price-band,
+# pass-through, and the NFR2 reused-OrderId guarantee).
+add_executable(risk_engine_test tests/risk_engine_test.cpp)
+target_link_libraries(risk_engine_test PRIVATE
+    GTest::gtest_main risk engine miniexchange_warnings)
+gtest_discover_tests(risk_engine_test)
+
+# FIX adapter library (Phase 9). Platform-neutral (a wire format, not a
+# transport) — no sockets, so it lives outside the UNIX-only block.
+# Written against EngineAPI, so it composes with the RiskEngine decorator.
+add_library(adapters_fix
+    adapters/fix/FixMessage.cpp
+    adapters/fix/FixParser.cpp
+    adapters/fix/FixEncoder.cpp
+    adapters/fix/FixSession.cpp)
+target_link_libraries(adapters_fix PUBLIC orderbook PRIVATE miniexchange_warnings)
+
+add_executable(fix_adapter_test tests/fix_adapter_test.cpp)
+target_link_libraries(fix_adapter_test PRIVATE
+    GTest::gtest_main adapters_fix engine miniexchange_warnings)
+gtest_discover_tests(fix_adapter_test)
+
+# Strategy SDK (Phase 10). Platform-neutral: strategies are ordinary
+# EngineAPI clients (NFR1), so they compose with the RiskEngine decorator.
+add_library(strategy
+    strategy/MarketMakerStrategy.cpp
+    strategy/MomentumStrategy.cpp)
+target_link_libraries(strategy PUBLIC orderbook PRIVATE miniexchange_warnings)
+
+add_executable(strategy_test tests/strategy_test.cpp)
+target_link_libraries(strategy_test PRIVATE
+    GTest::gtest_main strategy risk engine miniexchange_warnings)
+gtest_discover_tests(strategy_test)
+
+# Strategy runner app (Phase 10 composition root). In-process, drives
+# strategies against a RiskEngine-wrapped MatchingEngine.
+add_executable(strategy_runner apps/strategy_runner/main.cpp)
+target_link_libraries(strategy_runner PRIVATE
+    strategy risk engine miniexchange_warnings)
 gtest_discover_tests(pool_exhaustion_test)
 
 # Shared text protocol library (extracted from apps/cli/ for reuse by adapters/tcp/)
@@ -183,7 +231,7 @@ if(UNIX AND NOT APPLE)
     # Exchange server app — multi-threaded TCP composition root (Phase 5+7)
     add_executable(exchange_server apps/exchange_server/main.cpp)
     target_link_libraries(exchange_server PRIVATE
-        engine adapters_tcp adapters_udp adapters_binary_protocol text_protocol miniexchange_warnings)
+        engine risk adapters_tcp adapters_udp adapters_binary_protocol text_protocol miniexchange_warnings)
 
     # Exchange server E2E integration test (full round-trip through real sockets)
     add_executable(exchange_server_e2e_test tests/exchange_server_e2e_test.cpp)

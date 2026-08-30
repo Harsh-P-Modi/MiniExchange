@@ -14,24 +14,27 @@
 using namespace miniexchange;
 
 // ============================================================
-// Helper: dispatches an EngineCommand to the MatchingEngine,
-// mirroring what the exchange_server's engine thread will do.
+// Helper: dispatches a TaggedCommand to the MatchingEngine,
+// mirroring exactly what the exchange_server's engine thread does
+// (apps/exchange_server/main.cpp), INCLUDING the Phase 8 step of
+// tagging the order with the submitting client's ClientId before
+// submit, so the resting order records its owner (R5 / T3).
 // ============================================================
 static EngineResponse dispatch_command(MatchingEngine& engine,
-                                       EngineCommand& command) {
+                                       TaggedCommand& tagged) {
     return std::visit(
         [&](auto& cmd) -> EngineResponse {
             using T = std::decay_t<decltype(cmd)>;
-            if constexpr (std::is_same_v<T, LimitOrder>) {
-                return engine.submit(NewOrder{cmd});
-            } else if constexpr (std::is_same_v<T, MarketOrder>) {
+            if constexpr (std::is_same_v<T, LimitOrder> ||
+                          std::is_same_v<T, MarketOrder>) {
+                cmd.owner = tagged.client;  // T3: thread ClientId → order
                 return engine.submit(NewOrder{cmd});
             } else {
                 static_assert(std::is_same_v<T, CancelRequest>);
                 return engine.cancel(cmd.id);
             }
         },
-        command);
+        tagged.command);
 }
 
 // ============================================================
@@ -65,7 +68,7 @@ TEST(ResponseRoutingTest, MultipleClientsGetOwnResponses) {
     // Pop commands, process, push tagged responses onto outbound queue
     TaggedCommand popped;
     while (inbound.try_pop(popped)) {
-        EngineResponse resp = dispatch_command(engine, popped.command);
+        EngineResponse resp = dispatch_command(engine, popped);
         TaggedResponse tagged;
         tagged.client = popped.client;
         tagged.response = std::move(resp);
@@ -124,7 +127,7 @@ TEST(ResponseRoutingTest, CrossTalkVerification) {
     // Engine thread simulation: process all
     TaggedCommand popped;
     while (inbound.try_pop(popped)) {
-        EngineResponse resp = dispatch_command(engine, popped.command);
+        EngineResponse resp = dispatch_command(engine, popped);
         TaggedResponse tagged;
         tagged.client = popped.client;
         tagged.response = std::move(resp);
@@ -184,7 +187,7 @@ TEST(ResponseRoutingTest, MixedCommandTypesRoutedCorrectly) {
     // Engine thread processes all
     TaggedCommand popped;
     while (inbound.try_pop(popped)) {
-        EngineResponse resp = dispatch_command(engine, popped.command);
+        EngineResponse resp = dispatch_command(engine, popped);
         TaggedResponse tagged;
         tagged.client = popped.client;
         tagged.response = std::move(resp);
@@ -245,7 +248,7 @@ TEST(ResponseRoutingTest, DisconnectedClientResponseDropped) {
     // Engine processes both (engine has no concept of "connected")
     TaggedCommand popped;
     while (inbound.try_pop(popped)) {
-        EngineResponse resp = dispatch_command(engine, popped.command);
+        EngineResponse resp = dispatch_command(engine, popped);
         TaggedResponse tagged;
         tagged.client = popped.client;
         tagged.response = std::move(resp);
@@ -268,4 +271,45 @@ TEST(ResponseRoutingTest, DisconnectedClientResponseDropped) {
     ASSERT_EQ(delivered.size(), 1u);
     EXPECT_EQ(delivered[0].client, active_client);
     EXPECT_EQ(delivered[0].response.status, EngineResult::Accepted);
+}
+
+// ============================================================
+// Phase 8 / T3 — ClientId threads end-to-end: TaggedCommand.client
+// → order.owner → resting Order.owner. Two clients submit resting
+// limit orders through the queue+dispatch path; each resting order
+// must carry the ClientId of the connection that submitted it.
+// ============================================================
+
+TEST(ResponseRoutingTest, OwnerThreadsFromTaggedCommandToRestingOrder) {
+    SpscRingBuffer<TaggedCommand, 64> inbound;
+    MatchingEngine engine;
+
+    ClientId client_a{11};
+    ClientId client_b{22};
+
+    // Client A: non-crossing buy (rests).
+    TaggedCommand cmd_a;
+    cmd_a.client = client_a;
+    cmd_a.command = LimitOrder{OrderId{1}, Side::Buy, Price{100}, Quantity{10}};
+    ASSERT_TRUE(inbound.try_push(std::move(cmd_a)));
+
+    // Client B: non-crossing sell (rests, well above the bid).
+    TaggedCommand cmd_b;
+    cmd_b.client = client_b;
+    cmd_b.command = LimitOrder{OrderId{2}, Side::Sell, Price{200}, Quantity{10}};
+    ASSERT_TRUE(inbound.try_push(std::move(cmd_b)));
+
+    // Engine-thread dispatch (production-faithful: tags owner).
+    TaggedCommand popped;
+    while (inbound.try_pop(popped)) {
+        dispatch_command(engine, popped);
+    }
+
+    // Each resting order carries its submitter's ClientId.
+    Order* a = engine.book().find_order(OrderId{1});
+    Order* b = engine.book().find_order(OrderId{2});
+    ASSERT_NE(a, nullptr);
+    ASSERT_NE(b, nullptr);
+    EXPECT_EQ(a->owner, client_a);
+    EXPECT_EQ(b->owner, client_b);
 }

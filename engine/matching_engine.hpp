@@ -32,7 +32,8 @@ public:
     // wired up, and 1,000,000 pool slots (sufficient for production use;
     // tests may pass a smaller value to exercise pool exhaustion).
     explicit MatchingEngine(EventSink* sink = NullEventSink::instance(),
-                            std::size_t pool_capacity = 1'000'000);
+                            std::size_t pool_capacity = 1'000'000,
+                            StpConfig stp = StpConfig{});
 
     // EngineAPI interface implementation.
     EngineResponse submit(const NewOrder& order) override;
@@ -52,6 +53,7 @@ private:
     Sequence next_sequence_{0};
     TradeSequence next_trade_sequence_{0};
     EventSink* sink_;
+    StpConfig stp_;  // Phase 8: self-trade-prevention config (default disabled)
 
     // Dispatch helpers — called by submit() via std::visit.
     EngineResponse submit_limit(const LimitOrder& order);
@@ -61,9 +63,25 @@ private:
     // at best price, up to limit_price (nullopt for market orders —
     // no ceiling/floor) or until remaining hits 0.
     // Modifies `remaining` in place. Returns the vector of trades.
+    //
+    // incoming_owner (Phase 8): used only when STP is enabled with the
+    // CancelResting policy — a resting order with this owner is pulled
+    // from the book (emitting on_order_cancelled) instead of traded
+    // against, and matching continues past it.
     std::vector<Trade> match_against_book(
-        Side incoming_side, OrderId incoming_id,
+        Side incoming_side, OrderId incoming_id, ClientId incoming_owner,
         Quantity& remaining, std::optional<Price> limit_price);
+
+    // STP pre-scan (Phase 8, RejectIncoming policy): returns true if the
+    // incoming order would cross any resting order owned by
+    // incoming_owner, walking the opposite side from best price up to
+    // limit_price (nullopt = market order, scans all crossable levels).
+    // Pure read — no mutation — so it can run BEFORE the engine records
+    // the OrderId or emits any event, preserving the zero-side-effect
+    // contract (NFR2). See design.md §5.
+    [[nodiscard]] bool would_self_cross(
+        Side incoming_side, ClientId incoming_owner,
+        std::optional<Price> limit_price) const;
 };
 
 }  // namespace miniexchange

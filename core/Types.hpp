@@ -112,6 +112,24 @@ struct Quantity {
 
 enum class Side { Buy, Sell };
 
+// StpPolicy (Phase 8) — how self-trade prevention resolves a would-be
+// self-cross (an incoming order about to trade against a resting order
+// owned by the same ClientId). RejectIncoming is the conservative
+// default; CancelResting mirrors venues that pull the resting order and
+// let the aggressor proceed. Lives in core/ (not risk/) because the
+// engine executes STP inside its match loop and must not depend on the
+// risk layer — see specs/phase-08-risk-engine/design.md §5.
+enum class StpPolicy { RejectIncoming, CancelResting };
+
+// StpConfig (Phase 8) — the slice of risk configuration the engine needs
+// to perform STP. Passed into MatchingEngine at construction. Defaults
+// to disabled, so an engine constructed without risk config behaves
+// exactly as it did before Phase 8 (no STP checks, no behavior change).
+struct StpConfig {
+    bool enabled = false;
+    StpPolicy policy = StpPolicy::RejectIncoming;
+};
+
 struct Sequence {
     uint64_t value;
 

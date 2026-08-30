@@ -4857,3 +4857,1516 @@ Saying "binary is 10× faster than JSON" is a headline, not an explanation. The 
 ### Phase 7 Summary
 
 Phase 7 demonstrates a complete binary wire protocol implementation: fixed-layout structs, network byte order for arbitrary-width types via a generic template that avoids modifying lower layers, zero-allocation codec verified by instrumented testing, and a comparison benchmark with honest attribution methodology. The gateway integration uses `std::function` startup-time binding rather than a class hierarchy — an example of choosing the simplest abstraction that satisfies the actual requirement (single startup-time choice, not per-message polymorphism). The benchmark exists to show *understanding* of where performance comes from, not just to produce a "binary is faster" headline.
+
+---
+
+## Phase 8 — Risk Engine
+
+Phase 8 adds a pre-trade risk layer (price-band, fat-finger, tick-size
+checks) as a Decorator over `MatchingEngine`, plus self-trade prevention
+(STP) inside the engine itself. It also lands two things explicitly
+deferred out of Phase 1: tick-size validation and STP (Phase 1 R14).
+
+A cross-cutting prerequisite runs first: threading `ClientId` (the
+per-connection owner introduced in Phase 5) all the way down to the
+resting order, so the engine can tell whether an incoming order would
+trade against its own submitter. See the Phase 5 section for where
+`ClientId` came from and why it's a strong wrapper type rather than a
+bare `uint64_t`.
+
+### T1 — `owner` field on `LimitOrder` / `MarketOrder`
+
+**What it does (plain language):** Adds a `ClientId owner` field to the
+two input order types a client submits. Before this, the engine received
+an order but had no idea *who* sent it — the `ClientId` was known at the
+TCP layer (for routing responses back to the right socket) but was
+thrown away before the order reached the engine. This field is the first
+of three steps (T1→T2→T3) that carry the submitter's identity from the
+network all the way to the resting order on the book, which STP (T5)
+then reads.
+
+**Exact location:** `core/NewOrder.hpp` — `LimitOrder` (the `ClientId
+owner{}` field) and `MarketOrder` (same). `ClientId` itself is defined in
+`core/Types.hpp:29-42` (Phase 5).
+
+**Why a defaulted trailing field, specifically:** The field is declared
+last in each struct and default-initialized (`ClientId owner{}`, which
+is `ClientId{0}`). This is a deliberate choice driven by how these
+structs are constructed everywhere in the codebase. `LimitOrder` and
+`MarketOrder` are built with *positional aggregate initialization* in
+dozens of places — tests, benchmarks, the workload generator, the text
+and binary protocol adapters — e.g. `LimitOrder{OrderId{1}, Side::Buy,
+Price{100}, Quantity{10}}`. C++ aggregate initialization fills fields
+left-to-right, and any field you don't supply gets its default. By
+putting `owner` last with a default:
+- Every existing `LimitOrder{id, side, price, qty}` stays valid and
+  compiles unchanged — the omitted `owner` becomes `ClientId{0}`.
+- Only code that actually knows the owner (the TCP adapter, in T3) sets
+  it explicitly.
+
+If `owner` were inserted anywhere but last, or declared without a
+default, every one of those call sites would break and need editing —
+turning a one-field addition into a churn across the whole test suite.
+
+**Why in the input types rather than passed as a separate `submit`
+argument:** The design keeps `EngineAPI::submit(const NewOrder&)`'s
+signature stable. `NewOrder` is already a `std::variant<LimitOrder,
+MarketOrder>`, so the owner rides *inside* the variant rather than as a
+second parameter. This means the port doesn't change shape, and there's
+no risk of a caller passing an order and forgetting the matching owner
+argument — they travel together as one value.
+
+**Complexity:** None meaningful. `ClientId` is a `uint64_t` wrapper, so
+each input struct grows by 8 bytes. These are short-lived stack/queue
+values, not the millions-of-instances resting `Order` (that size
+concern is T2's, not T1's — see T2's entry when written). Time
+complexity of anything is unchanged.
+
+**Benefits:**
+- Owner identity now *can* reach the engine (it doesn't yet — T2/T3 wire
+  the rest of the path, and the engine doesn't read it until T5).
+- Zero disruption to existing call sites.
+- Type safety preserved: because `ClientId` is a strong wrapper, you
+  can't accidentally pass an `OrderId` where an `owner` is expected.
+
+**Drawbacks / tradeoffs accepted:**
+- A defaulted field means "no owner specified" and "owner is client 0"
+  are indistinguishable. For this project that's fine — `ClientId{0}` is
+  a valid sentinel for "internally generated / not from a real client"
+  (tests, the workload generator), and real connections get non-zero IDs
+  starting at 1 (see Phase 5's `next_client_id_ = 1`). If we ever needed
+  to *require* an explicit owner, a defaulted field wouldn't enforce
+  that; we'd need a non-defaulted field and the call-site churn that
+  avoids.
+
+**Alternatives considered and rejected:**
+- *Insert `owner` earlier in the struct (e.g. right after `id`)* —
+  rejected: breaks every positional aggregate init in the codebase for
+  no benefit; field order carries no semantic meaning here.
+- *Second parameter to `submit(NewOrder, ClientId)`* — rejected: changes
+  the port signature and lets the order and its owner drift apart at
+  call sites.
+- *A separate `unordered_map<OrderId, ClientId>` on the side* —
+  rejected: adds a hash lookup on the hot matching path (STP would have
+  to consult it per examined resting order) instead of a direct field
+  read; also a second structure to keep in sync with order lifetime.
+
+**How this connects to what came before:** `ClientId` is Phase 5's
+type, and the reason it exists at all was *explicitly* to be consumed by
+Phase 8's STP (see the Phase 5 section and its ADR). Phase 5 got it as
+far as `TaggedCommand`/`TaggedResponse` for response routing; T1 begins
+extending it past the transport boundary into the domain types. This is
+also the first change to `core/NewOrder.hpp` since Phase 1, which
+introduced the `std::variant<LimitOrder, MarketOrder>` design (see the
+"NewOrder variant" section above) — that variant shape is exactly what
+lets `owner` ride along without touching the `submit` signature.
+
+**Check your understanding:**
+- Why does adding `owner` as the *last* field with a default avoid
+  breaking `LimitOrder{OrderId{1}, Side::Buy, Price{100}, Quantity{10}}`,
+  but adding it as the *second* field would break it?
+- The engine can't actually detect self-trades yet after T1 alone. What
+  else has to happen (which struct still lacks an `owner`, and which
+  adapter still discards it) before STP in T5 can work?
+
+### T2 — `owner` on the resting `Order`, and the cache-line cost
+
+**What it does (plain language):** Adds the same `ClientId owner` field
+to the resting `Order` — the struct that actually lives on the book —
+and copies the submitter's owner onto it at the moment the order rests.
+After T1 the *input* carried an owner; after T2 the *resting* order
+remembers it. That's what STP (T5) reads when it needs to ask "is the
+order I'm about to trade against owned by the same client as the
+incoming order?"
+
+**Exact locations:**
+- `core/Order.hpp` — the `ClientId owner{}` field and the
+  `static_assert(sizeof(Order) == 72)` right after the struct.
+- `engine/matching_engine.cpp`, `submit_limit` — the `order_data`
+  aggregate now sets `.owner = order.owner` when building the resting
+  `Order` from the incoming `LimitOrder`.
+- `tests/matching_engine_test.cpp` — `RestingOrderRetainsSubmitterOwner`,
+  `PartiallyFilledRemainderRetainsOwner`,
+  `RestingOrderDefaultsOwnerToZeroWhenUnset`.
+- `tests/price_level_test.cpp` and `tests/order_book_test.cpp` — their
+  `make_order` helpers were converted to designated initializers (see
+  "the aggregate-init trap" below).
+
+**Why market orders don't get this on a resting struct:** A `MarketOrder`
+never rests (it either fills or its remainder is discarded, R10), so it
+never becomes an `Order`. It still carries `owner` as an *input* (T1) so
+STP can check it during matching, but there's no resting-side owner to
+populate for it. Only `submit_limit` copies owner onto a resting order.
+
+**The cache-line cost — the part worth actually understanding:** A
+modern x86-64 CPU moves memory between RAM and cache in fixed 64-byte
+chunks called *cache lines*. If a struct fits in 64 bytes and is
+64-byte-aligned, touching any of its fields pulls in exactly one line;
+if it's 65–128 bytes, touching it may pull in two. Before T2, `Order`
+was *exactly* 64 bytes — a deliberate, if slightly lucky, property
+(id 8 + side 4 + 4 pad + price 8 + quantity 8 + sequence 8 + prev 8 +
+next 8 + level 8). Adding an 8-byte `owner` makes it 72, so a resting
+order now straddles two cache lines. On the hot matching path — where
+the loop walks a chain of resting orders via `next` and reads their
+`price`/`quantity` — that potentially means an extra line fetch per
+order examined.
+
+**Why it can't be packed back to 64:** People's first instinct is "just
+shrink `Side` to a `uint8_t` and reorder." But the 4 bytes `Side`
+currently wastes are *padding*, not a usable slot — the struct is
+already using its 8-byte alignment efficiently. `owner` needs a full
+8-byte-aligned slot, and there's no 8 free bytes to reclaim without
+shrinking something that's genuinely 8 bytes. The only real lever is the
+three 8-byte *pointers* (`prev`/`next`/`level`): if those became 32-bit
+*indices* into the order pool instead of raw pointers, you'd save 12
+bytes and could reabsorb `owner`. But index-based pool links are a
+Phase 3-scoped memory-layout change, deliberately out of scope here.
+So we accept 72 and pin it.
+
+**Why the `static_assert`:** `static_assert(sizeof(Order) == 72)` turns
+any *accidental* future size change into a compile error, not a silent
+performance regression discovered months later in a benchmark. If
+someone adds a field or changes a type, the build breaks and forces a
+conscious decision (and a LEARNING.md update). This is cheap insurance
+for a struct whose size is a known performance lever.
+
+**The aggregate-init trap (a real bug this task hit and fixed):** C++
+*aggregate initialization* with a positional brace list — `Order{a, b,
+c, ...}` — assigns values to fields strictly left-to-right in
+declaration order. Two test helpers built an `Order` positionally,
+ending in `..., nullptr, nullptr, nullptr` for `prev`/`next`/`level`.
+Because `owner` was inserted *before* those pointers in the struct, the
+positional list suddenly mapped a `nullptr` onto `owner` (a `ClientId`),
+and `nullptr` can't convert to `ClientId` — a hard compile error
+(`could not convert 'nullptr' ... to 'miniexchange::ClientId'`). The
+input types (T1) dodged this by putting `owner` *last* with a default,
+but these `Order` helpers listed fields positionally through to the end,
+so the trailing-field trick didn't save them. Fix: convert them to
+*designated initializers* (`.id = ..., .quantity = ...`), which bind by
+name, not position — so they're immune to future field reordering too.
+This is the concrete reason the LEARNING policy warns that "simple"
+struct changes ripple: a one-field addition surfaced as a compile break
+two test files away.
+
+**Complexity:** Unchanged for all operations. The only cost is spatial:
++8 bytes per resting order and the potential second-cache-line touch
+described above. With a pool of up to 1,000,000 orders that's ~8 MB of
+additional worst-case resident memory.
+
+**Benefits:**
+- The resting order now self-describes its owner — STP reads it as a
+  direct field on a pointer the match loop already holds, no side-table
+  lookup (the rejected alternative from T1).
+- The layout is pinned, so the cost is explicit and guarded.
+
+**Drawbacks / tradeoffs accepted:**
+- Two cache lines per `Order` instead of one, on the hottest struct in
+  the system. T4 re-benchmarks to quantify whether this actually matters
+  in practice (it may be negligible if the second line is usually
+  already warm, or if the loop is bound by other costs).
+- +8 MB worst-case memory.
+
+**Alternatives considered and rejected:**
+- *Put `owner` last (after `level`)* — would have kept the positional
+  `{..., nullptr, nullptr, nullptr}` helpers compiling. Rejected because
+  it's semantically odd (identity field trailing the intrusive-list
+  plumbing) and the real fix — designated initializers in the helpers —
+  is more robust against *any* future reordering, not just this one.
+- *32-bit index pool links now, to stay at 64 bytes* — rejected as
+  out-of-scope Phase 3 work; doing it reactively here would smuggle a
+  memory-layout redesign into a risk-engine phase.
+- *Side table `unordered_map<OrderId, ClientId>`* — same rejection as
+  T1: a hash lookup per examined resting order on the hot path, versus a
+  direct field read.
+
+**How this connects to what came before:** This extends the resting
+`Order` from Phase 1 (see the "intrusive doubly-linked list" and
+`level` back-pointer sections earlier) — the same struct whose 64-byte
+size was noted approvingly there is what T2 grows to 72. It consumes
+T1's input-side `owner` (the `submit_limit` copy is the hand-off point).
+The `OrderPool` that pre-allocates these (Phase 3) is why the +8 bytes
+is a fixed ~8 MB rather than per-allocation churn.
+
+**Check your understanding:**
+- Why does a `MarketOrder` carry `owner` (T1) but never populate a
+  resting order's `owner` (T2)?
+- The `make_order` helpers broke but the dozens of `LimitOrder{...}`
+  call sites didn't. Why did the trailing-defaulted-field trick protect
+  one and not the other?
+- If a future phase switched the pool links to 32-bit indices and
+  reclaimed the cache line, which line in `core/Order.hpp` would force
+  you to consciously update the size expectation?
+
+### T3 — Threading `ClientId` through the gateway's engine-thread dispatch
+
+**What it does (plain language):** Completes the owner-identity path. T1
+put `owner` on the input types, T2 put it on the resting order — but the
+network gateway was still *dropping* the client's identity. Every
+incoming order arrives wrapped as a `TaggedCommand` (the order plus the
+`ClientId` of the socket that sent it). The engine thread was unwrapping
+the order and submitting it while ignoring the `ClientId` — it only used
+that ID later, to route the *response* back to the right socket. T3
+makes the engine thread copy `TaggedCommand.client` onto the order's
+`owner` field just before `submit`, so the identity actually reaches the
+engine and lands on the resting order.
+
+**Exact locations:**
+- `apps/exchange_server/main.cpp` — the engine-thread `std::visit`
+  dispatch: the `LimitOrder`/`MarketOrder` branch now does
+  `command.owner = cmd.client;` before `engine.submit(command)`.
+- `tests/response_routing_test.cpp` — the `dispatch_command` helper was
+  changed to take the whole `TaggedCommand` (not just the bare
+  `EngineCommand`) and perform the same `cmd.owner = tagged.client`
+  tagging, so the test path mirrors production exactly. New test:
+  `OwnerThreadsFromTaggedCommandToRestingOrder`.
+
+**Why the tagging happens in the engine-thread dispatch, not the parser
+or the queue:** There are three plausible places to inject `owner`:
+1. In the protocol parser (when bytes become a `LimitOrder`).
+2. When building the `TaggedCommand` (frame handler, I/O thread).
+3. In the engine-thread dispatch, right before `submit`.
+
+Option 1 is wrong: the parser deliberately knows nothing about
+connections — it turns bytes into a command, and the same parser is used
+for both protocols. Option 2 is tempting (the frame handler already has
+`client_id`), but it would mean duplicating the `owner` into two places
+(the `TaggedCommand.client` for routing *and* the order's `owner`) at
+the boundary, and the order inside `TaggedCommand.command` is a variant
+that still has to be unwrapped anyway. Option 3 is the single point
+where we already `std::visit` the command and have both the order (as a
+mutable reference) and the `ClientId` (`cmd.client`) in hand — so it's
+one assignment, no duplication, and it sits exactly at the hand-off to
+the engine. It keeps `TaggedCommand.client` as the *routing* identity
+and the order's `owner` as the *domain* identity, populated from the
+same source at the last moment.
+
+**Why the resting `Order` ends up with the right owner "for free":**
+T2's `submit_limit` copies `order.owner` onto the resting `Order`. So
+once the dispatch sets `command.owner`, the existing T2 machinery
+carries it the rest of the way — T3 didn't have to touch the engine
+internals at all, only the composition root. This is the payoff of doing
+T1/T2 first: the retrofit meets in the middle.
+
+**Complexity:** One field copy per submitted order — O(1), negligible.
+No new allocations, no queue changes.
+
+**Benefits:**
+- Self-trade prevention (T5) becomes *possible*: the resting orders on
+  the book now truthfully record who owns them, sourced from the actual
+  TCP connection.
+- The test helper now faithfully mirrors production, so routing tests
+  and owner-threading are validated on the same code path.
+
+**Drawbacks / tradeoffs accepted:**
+- The tagging lives in the app's dispatch loop, so any *future* second
+  entry point into the engine (another app, a replay tool) must remember
+  to tag `owner` too. This is the same "exactly one composition root"
+  expectation design.md §7 relies on for NFR2 — an architectural
+  discipline, not something the type system enforces. A stricter
+  alternative (below) was considered and deferred.
+
+**Alternatives considered and rejected:**
+- *Make `owner` a required constructor argument to `submit`* — would
+  force every caller to supply it (compile-time safety against
+  forgetting). Rejected for now because it changes the `EngineAPI::submit`
+  signature that Phases 5–7 already depend on, and the project has a
+  single composition root today; revisit if a second engine entry point
+  ever appears.
+- *Tag `owner` in the frame handler (I/O thread)* — rejected: the order
+  is still inside a variant that the engine thread unwraps anyway, so
+  tagging there just moves the same `std::visit` earlier and splits the
+  identity-handling across two threads for no benefit.
+
+**How this connects to what came before:** This is step 3 of the
+T1→T2→T3 retrofit — it consumes T2's resting-order `owner` field and
+T1's input `owner` field. The `TaggedCommand`/`TaggedResponse` types and
+the two-thread SPSC-queue gateway are Phase 5's (see the Phase 5
+section); `ClientId` itself is Phase 5's type. T3 is the moment Phase
+5's routing-only `ClientId` finally becomes domain data the engine acts
+on — exactly the "Phase 8 consumes what Phase 5 built" story from the
+Phase 5 ADR.
+
+**Check your understanding:**
+- The response is routed back to the client using `TaggedResponse.client`,
+  and the resting order records `Order.owner`. Both come from the same
+  `ClientId` — so why keep two separate fields instead of reusing one?
+- If a new "replay" app fed orders straight into `MatchingEngine`
+  without going through this dispatch loop, what would silently be wrong
+  about STP, and which design.md constraint does that violate?
+- Why is the parser the *wrong* place to set `owner`, even though it's
+  where the `LimitOrder` is first constructed?
+
+### T4 — Re-benchmarking the `Order` size change (and why the number is pending)
+
+**What it does (plain language):** T2 grew the resting `Order` from 64
+to 72 bytes. The project's rule (product.md) is that every phase ships
+benchmark numbers compared against the prior baseline — so T4 is the
+"did that actually cost anything on the hot path?" measurement. The
+honest outcome this session: the structural fact is verified, but the
+*numeric* latency delta is recorded as pending a controlled run, because
+the machine used couldn't produce trustworthy benchmark output.
+
+**Exact location:** `benchmarks/results/phase-08-order-size.md` (new).
+The harness itself is `apps/benchmark/` → `benchmark_harness.exe`;
+`apps/benchmark/latency_bench.cpp` defines the ADD/CANCEL latency loops.
+
+**Why "pending" is the right call, not a cop-out:** A benchmark number
+is only worth recording if it's trustworthy. Two independent reasons
+made a real number impossible/meaningless here: (1) the shell driving
+the harness was intermittently not returning output, so nothing could be
+captured cleanly; (2) even the *existing* baseline docs
+(`phase-02-baseline.md`, `phase-03-pooled.md`) explicitly conclude their
+own numbers are "dominated by system noise" on this uncontrolled Windows
+laptop and recommend a pinned Linux run for anything authoritative. A
+cache-line-straddle effect is a few nanoseconds per examined order —
+below the noise floor of a machine whose benchmark `max` values swing
+from 30µs to 1.1ms between runs. Fabricating or pasting a noisy figure
+would be *worse* than honestly deferring it, because a wrong number in a
+results file is a number someone later trusts.
+
+**What IS verified (and how):** `sizeof(Order) == 72` is not an
+estimate — it's enforced by a `static_assert` that the entire codebase
+compiles against (T2). So the thing the benchmark would *attribute* a
+cost to (the size change) is certain; only the magnitude of any runtime
+effect is unmeasured.
+
+**Why this specific hot path is the one to watch:**
+`match_against_book` walks resting orders through `Order::next` and reads
+`price`/`quantity` on each. When each `Order` was 64 bytes and
+64-aligned, one order = one cache line. At 72 bytes it can span two, so
+a long sweep (the "ADD (10 fills)" / "ADD (100 fills)" benchmark rows)
+is where any effect would show. Single-order ADD and O(1) CANCEL touch
+too few orders to matter — a useful thing to reason about *before*
+measuring, so you know which rows to actually look at.
+
+**Complexity / cost:** No algorithmic change. Purely a spatial change
+(+8 bytes/order) whose runtime effect is a possible extra cache-line
+fetch per examined resting order on deep sweeps.
+
+**Benefits of recording it this way:** The results file documents the
+verified size fact, the exact reproduction commands, the baseline to
+compare against, which rows are sensitive, and the expectation — so
+whoever runs it on the Linux box can produce the authoritative number in
+minutes without re-deriving any of the reasoning.
+
+**Drawbacks / tradeoffs accepted:** The phase ships without a measured
+latency delta for this change until the controlled run happens. Accepted
+because a noisy number here would be misleading, and the mitigation path
+(32-bit index pool links) is already identified if a real regression
+later appears.
+
+**Alternatives considered and rejected:**
+- *Record the noisy Windows numbers anyway* — rejected: the baseline
+  docs already established these are untrustworthy; adding another noisy
+  table invites false conclusions.
+- *Skip the benchmark note entirely* — rejected: violates the
+  benchmark-every-phase rule and would leave the size change
+  undocumented from a performance standpoint. "Pending, here's how" is
+  accountable; silence isn't.
+
+**How this connects to what came before:** Directly measures T2's
+64→72 change. Reuses the Phase 2 harness and compares against the Phase 2
+baseline (see the Phase 2 benchmarking section). The mitigation it points
+to (index-based pool links) is Phase 3 territory (see the Phase 3
+section).
+
+**Check your understanding:**
+- Why would "ADD (100 fills)" be more sensitive to the `Order` size
+  change than "ADD (no match)" or "CANCEL"?
+- The `static_assert` guarantees the *size* changed. Why does that not
+  also tell you the *latency* changed — what's the difference between a
+  structural fact and a performance fact?
+
+### T5 — Self-trade prevention, inside the engine's match loop
+
+**What it does (plain language):** Stops a client from trading against
+itself. If client 7 has a resting sell at 100 and then submits a buy at
+100, without STP the engine would happily match them — client 7 trades
+with client 7. Real venues generally prevent this (it's economically
+pointless and can be used to paint misleading volume). T5 adds two
+configurable behaviours: **RejectIncoming** (default — refuse the new
+order) and **CancelResting** (pull the client's own resting order out of
+the way and let the new one proceed).
+
+**Exact locations:**
+- `core/Types.hpp` — `enum class StpPolicy { RejectIncoming, CancelResting }`
+  and `struct StpConfig { bool enabled; StpPolicy policy; }`.
+- `core/Events.hpp` — new `EngineResult::SelfTradePrevented`.
+- `engine/matching_engine.hpp` — the `StpConfig stp_` member, the
+  constructor's third parameter, the `would_self_cross(...)` declaration,
+  and `match_against_book`'s new `ClientId incoming_owner` parameter.
+- `engine/matching_engine.cpp` — the pre-scan guard in `submit_limit`
+  and `submit_market`; the CancelResting branch at the top of the inner
+  matching loop; the `would_self_cross` implementation at the bottom.
+- `tests/matching_engine_test.cpp` — `StpRejectTest` (6 tests),
+  `StpCancelTest` (2 tests), `StpDisabledSelfCrossTradesNormally`.
+
+**Why STP lives in the engine, not the RiskEngine decorator — the key
+architectural decision of this phase.** The other three risk checks
+(fat-finger, tick-size, price-band) look only at the *incoming* order's
+own fields, so a decorator wrapping `EngineAPI` can evaluate them with
+no knowledge of the book. STP is different: it's a question about the
+*relationship* between the incoming order and what's resting. Three
+reasons it belongs inside:
+
+1. **It duplicates the matching traversal.** To know whether an order
+   "would cross" a same-owner order, you must walk the opposite side from
+   the best price up to the limit price — which is precisely what
+   `match_against_book` already does. A decorator would reimplement that
+   walk.
+2. **Cost.** In the loop, the check is a single field comparison
+   (`resting->owner == incoming_owner`) on an `Order` the loop already
+   has in a register/cache. In a decorator it's a separate pre-walk of
+   O(crossable depth) per submit — and a market order crosses *every*
+   level.
+3. **Side-effect ordering (the decisive one).** `submit_limit` records
+   the OrderId in `ever_seen_ids_` and emits `on_order_accepted`
+   **before** matching starts. If STP were detected mid-match, the ID
+   would already be consumed, the accept event already fired, and earlier
+   fills already executed — breaking NFR2's "a rejected order has zero
+   side effects" and R5's "instead of allowing the match."
+
+Note this is a *cost and correctness-of-ordering* argument, **not** an
+impossibility argument: `OrderBook::bids()/asks()`, `PriceLevel::front()`
+and `Order::next` are all public, so a decorator *could* walk the book.
+It just shouldn't. The accepted tradeoff: R1's "RiskEngine is a pure
+decorator" framing is slightly violated — one risk rule lives in
+`engine/`. That's the honest price of R5.
+
+**Why RejectIncoming is a *pre-scan* rather than a mid-loop abort.**
+Because of reason 3 above, the check has to complete before *any*
+mutation. So `would_self_cross()` is a `const` method that walks the
+opposite-side price trees and returns a bool, changing nothing. It runs
+after the cheap validations (qty/price/duplicate) but before
+`ever_seen_ids_.insert()` and before any event or fill. If it returns
+true we return `SelfTradePrevented` immediately — no ID consumed, no
+events, no partial fills. The test
+`StpRejectTest.RejectedOrderIdNotConsumed` proves the ID is reusable
+afterwards, and `SameOwnerCrossRejectedWithNoSideEffects` asserts the
+event sink saw nothing at all.
+
+**Why CancelResting is the opposite — it belongs *inside* the loop.**
+This policy doesn't reject anything; it interleaves with matching. When
+the loop reaches a resting order owned by the incoming client, it removes
+that order (emitting `on_order_cancelled`, same as a normal cancel) and
+carries on matching against whatever is behind it. That's inherently a
+per-order decision made during traversal, so a pre-scan would be the
+wrong shape.
+
+**A real pointer-lifetime bug this task had to avoid (worth
+understanding).** The first version of the CancelResting branch did:
+
+```cpp
+book_.remove_order(resting);
+if (level->empty()) break;   // ← use-after-free!
+continue;
+```
+
+`OrderBook::remove_order` erases the `PriceLevel` from the `std::map`
+when it becomes empty — and the `PriceLevel` is stored *by value* in the
+map, so erasing **destroys it**. The `level` pointer we were holding then
+dangles, and `level->empty()` is undefined behaviour. It would likely
+"work" in testing and corrupt memory later. The fix: after a
+CancelResting removal, unconditionally `break` out of the inner loop and
+let the outer loop re-fetch the best level via `best_ask()/best_bid()`.
+That's correct whether or not the level survived, and re-fetching is O(1)
+(`map::begin()`). This is the kind of bug intrusive/pointer-based
+containers invite — the same `Order*`-into-pool-storage design that buys
+O(1) cancel also means you must reason about exactly when a pointer dies.
+
+**Termination argument (why the loop can't spin forever):** each inner
+iteration either fills (strictly reduces `remaining`), or cancels a
+same-owner order (strictly reduces the number of orders in the book), or
+breaks. Since the book is finite and `remaining` only decreases, the loop
+terminates.
+
+**Complexity:**
+- RejectIncoming pre-scan: O(C) where C is the number of resting orders
+  at crossable price levels — worst case the whole crossable side. Only
+  paid when STP is enabled. Note this is *added* latency on the submit
+  path, and it's the main cost of choosing the zero-side-effect guarantee
+  over a cheaper mid-loop abort.
+- CancelResting: O(1) extra per examined resting order (one `ClientId`
+  comparison), plus O(1) removal per self-order pulled.
+- STP disabled (the default): one bool check per submit, effectively free.
+- Space: none beyond the 2-byte-ish `StpConfig` on the engine.
+
+**Why `StpConfig` lives in `core/`, not `risk/`:** the engine executes
+STP, so the engine needs the config type. But `engine/` must not depend
+on `risk/` (dependency direction points inward: `risk`/adapters →
+interfaces → engine → orderbook → core). Putting `StpPolicy`/`StpConfig`
+in `core/` lets both the engine and T6's `RiskConfig` reference them
+without inverting the dependency. `RiskConfig` will *contain* the STP
+settings and pass this slice down.
+
+**Benefits:**
+- Both policies implemented with the zero-side-effect contract intact.
+- Defaults to disabled, so every pre-Phase-8 behaviour is bit-identical
+  unless you opt in — verified by the existing 60-test suite passing
+  unchanged, plus `StpDisabledSelfCrossTradesNormally` pinning the old
+  self-cross behaviour explicitly.
+
+**Drawbacks / tradeoffs accepted:**
+- One risk concern now lives in `engine/` (see above).
+- The pre-scan is **conservative**: it rejects if *any* crossable
+  same-owner order exists, even if the incoming order's quantity would
+  have been exhausted by other clients' orders before ever reaching it.
+  `RejectsWhenSameOwnerRestsBehindOtherOwnerAtCrossablePrice` documents
+  this deliberately. A precise check would have to simulate the fill
+  sequence — i.e. run the whole match — which reintroduces the ordering
+  problem. Conservative-and-cheap was chosen over precise-and-complex.
+- The pre-scan walks the book on every STP-enabled submit, adding latency
+  proportional to crossable depth.
+
+**Alternatives considered and rejected:**
+- *STP in the RiskEngine decorator* — rejected for the three reasons
+  above; the ordering one is fatal.
+- *Mid-loop abort with rollback for RejectIncoming* — rejected: you'd
+  have to un-emit events and reverse fills. Events are already broadcast
+  to an `EventSink` (a UDP publisher in production, per Phase 6) — you
+  cannot un-send a datagram.
+- *Precise "would actually fill against" simulation* — rejected as above.
+- *Storing owner in a side map instead of on `Order`* — already rejected
+  in T1/T2; would turn the per-order comparison into a hash lookup.
+
+**How this connects to what came before:** This is the payoff of the
+T1→T2→T3 retrofit — it consumes `Order::owner` (T2), populated from the
+TCP client (T3). It extends `match_against_book`, the price-time-priority
+loop built in Phase 1 (see the matching-loop section), and reuses
+Phase 1's cancel path (`remove_order` + `on_order_cancelled`) for
+CancelResting. The `EventSink` it emits through is Phase 1's output port
+(Phase 6's UDP feed is a real subscriber). NFR2's guarantee rests on the
+`ever_seen_ids_` ordering documented in design.md §7.
+
+**Check your understanding:**
+- Why can't RejectIncoming be implemented as "abort as soon as the match
+  loop meets a same-owner order"? Name the specific side effects that
+  would already have happened.
+- After `book_.remove_order(resting)`, why is it unsafe to read
+  `level->empty()`? What does `OrderBook::remove_order` do to the
+  `PriceLevel` and where does the `PriceLevel` actually live?
+- The pre-scan can reject an order that would never actually have
+  self-traded. Construct such a case, and explain why fixing it properly
+  is harder than it sounds.
+- Why does `StpConfig` live in `core/` rather than next to `RiskConfig`?
+
+### T6 — `RiskConfig`: the rule set as plain data
+
+**What it does (plain language):** A single struct holding every knob the
+risk layer has — the price-band percentage and its reference price, the
+fat-finger quantity ceiling, the tick size, and the STP on/off + policy.
+It's handed to `RiskEngine` at construction. No logic lives here; it's
+just the configuration, so the "what are the limits" question has exactly
+one answer in one place.
+
+**Exact location:** `risk/risk_config.hpp` (header-only — it's a POD-ish
+struct with one tiny helper). `StpPolicy`/`StpConfig` it references live
+in `core/Types.hpp` (added in T5).
+
+**Why a plain struct passed to the constructor, not a config file or a
+builder:** The project's steering explicitly limits the pattern set —
+"plain constructor-based dependency injection" is on the list; a config
+file format or a fluent builder is not, and would be speculative until
+something actually needs it. `TcpServer` already set the precedent
+(configurable port via constructor). So `RiskConfig` is just a value you
+construct and pass. If a future phase needs runtime reconfiguration or
+loading from disk, that's the moment to add it — not now.
+
+**Why single-symbol (no `map<SymbolId, RiskConfig>`):** MiniExchange is
+single-symbol (product.md). A per-symbol map would be building for a
+requirement that doesn't exist. `SymbolId` exists as a type, but that's
+not a reason to key a map by it. Documented as a one-line future option
+in the header, not built.
+
+**The floating-point question — the subtle bit.** `price_band_pct` is a
+`double`. The steering rule is "no floating point in `core/`,
+`orderbook/`, or `engine/`." Note the list: `risk/` is *not* on it, and
+that's deliberate. The band is a percentage — inherently fractional — and
+it lives entirely in the risk layer. Crucially, no `double` ever crosses
+into the engine: the band check converts the percentage into an integer
+tick allowance and compares integers (see T10), and the accept/reject
+result is just an enum. Prices on `Order`/`Trade` stay integer ticks
+end to end. So the rule is respected in substance (no float anywhere near
+a stored price or the matching math), not just in letter. This is worth
+internalizing: the rule is about keeping *price arithmetic* exact and
+deterministic, not a blanket ban on the `double` type existing in the
+codebase.
+
+**Complexity / cost:** None — it's a value struct. `stp()` returns a
+2-field struct by value.
+
+**Benefits:** One source of truth for limits; trivially testable;
+matches the project's DI convention; keeps the float contained.
+
+**Drawbacks / tradeoffs:** A struct can't validate its own invariants
+(e.g. "band must be positive") at the type level — RiskEngine handles
+nonsensical values defensively (T10) instead. Accepted: a validating
+config type would be more machinery than a portfolio project this size
+warrants.
+
+**Alternatives considered and rejected:**
+- *Config file (JSON/YAML)* — rejected: no requirement, adds a parser and
+  a format to maintain.
+- *Per-symbol map* — rejected: single-symbol project.
+- *Integer "band in ticks" instead of a percentage* — plausible, and it
+  would avoid the `double` entirely, but a percentage band is what the
+  requirement (R2) describes and what a trader expects ("within 10% of
+  reference"); the integer conversion happens once at check time anyway.
+
+**How this connects to what came before:** Feeds `RiskEngine` (T7) and
+donates its STP slice to `MatchingEngine` (T5) via `stp()`. Reuses the
+`StpPolicy`/`StpConfig` types introduced in T5.
+
+**Check your understanding:**
+- Why is a `double` here not a violation of the "no floating point in the
+  engine" rule, when a `double` price *would* be?
+- What's the single-symbol assumption baked into `RiskConfig`, and what
+  would change if the project went multi-symbol?
+
+### T7 — `RiskEngine`: the Decorator, and why it's shaped like the engine
+
+**What it does (plain language):** A class that looks *exactly* like a
+`MatchingEngine` from the outside (it implements the same `EngineAPI`
+port), but on the way in it runs the risk checks. If an order passes, it
+forwards to the real engine it wraps; if not, it returns a rejection
+without ever calling the engine. Callers can't tell whether they're
+holding a bare engine or a risk-wrapped one — they just see `EngineAPI`.
+
+**Exact locations:** `risk/risk_engine.hpp` (class), `risk/risk_engine.cpp`
+(the forwarding + `run_checks` skeleton). Skeleton behaviour (pass
+everything through) is what T7 delivers; T8–T11 fill in the checks.
+
+**What the Decorator pattern actually is (from first principles):** A
+decorator is an object that implements the same interface as the thing it
+wraps, holds a pointer to that thing, and adds behaviour before/after
+delegating. The value is that it's *transparent*: any code written
+against the interface works with the decorated object with zero changes.
+Here, `apps/exchange_server` builds a `RiskEngine` around a
+`MatchingEngine` and hands out an `EngineAPI&` — the TCP dispatch loop,
+which was written in Phase 5 against `EngineAPI`, calls `submit`/`cancel`
+exactly as before and never learns risk checks were inserted. That's the
+whole point: you add a cross-cutting concern (risk) without touching the
+code it wraps or the code that calls it.
+
+**Why this is the right pattern here specifically:** The alternative
+would be to bake the risk checks *into* `MatchingEngine` behind an
+`if (risk_enabled)`. That would (a) violate the single-responsibility
+split the whole project is built on — matching logic vs. risk policy are
+different concerns — and (b) force every test and benchmark of the raw
+engine to reason about risk config. The decorator keeps
+`MatchingEngine` a pure matching engine and makes risk an opt-in layer.
+It also composes: you could stack another decorator (say, a logging or
+metrics one) without any of them knowing about the others.
+
+**Why `EngineAPI* inner` is a raw non-owning pointer:** Same convention
+as `MatchingEngine`'s `EventSink*` — the composition root owns both
+objects and guarantees the inner engine outlives the decorator. A
+`unique_ptr` would claim ownership the decorator doesn't have; a
+reference would prevent the object from being reseated and complicate
+construction order. Raw-pointer-as-non-owning-observer is the
+deliberate, documented idiom in this codebase.
+
+**Complexity:** `submit` adds O(checks) work (each check is O(1) except
+the price-band/STP interactions covered later); `cancel` and `book`
+forward in O(1). No allocation.
+
+**Benefits:** Transparent insertion; engine stays pure; testable in
+isolation against any `EngineAPI` (the tests wrap a real `MatchingEngine`,
+but a stub would work too); composes with future decorators.
+
+**Drawbacks / tradeoffs accepted:**
+- One virtual call of indirection per `submit`/`cancel` (the decorator's
+  own override, then the inner engine's). Negligible next to matching
+  work, and only present when risk is wired in.
+- STP is the exception that *doesn't* fit the decorator cleanly (it needs
+  the match loop), so it lives in the engine — see T5. So the decorator
+  isn't the whole risk story, which is a small conceptual wrinkle.
+
+**Alternatives considered and rejected:**
+- *Risk logic inside `MatchingEngine`* — rejected: conflates concerns,
+  pollutes every raw-engine test.
+- *A free function `check_and_submit(engine, order, config)`* — rejected:
+  it wouldn't be an `EngineAPI`, so adapters couldn't hold it
+  polymorphically; the whole point is that the risk layer *is* an engine
+  as far as callers know.
+
+**How this connects to what came before:** Implements the `EngineAPI`
+port from Phase 1 (the same port `MatchingEngine` implements). Relies on
+the ports-and-adapters structure: adapters depend on `interfaces/`, so
+swapping a bare engine for a decorated one is invisible to them. This is
+the payoff of Phase 1's decision to make `EngineAPI` an abstract port
+rather than letting adapters call a concrete class.
+
+**Check your understanding:**
+- Why can `apps/exchange_server`'s dispatch loop, written in Phase 5,
+  work unchanged when a `RiskEngine` is inserted in front of the engine?
+- Why is `inner_` a raw pointer and not a `unique_ptr` or a reference?
+- Which single risk rule does NOT live in this decorator, and why not?
+
+### T8 — Fat-finger check (R3)
+
+**What it does:** Rejects an order whose quantity exceeds a configured
+ceiling — the classic "someone typed 10,000,000 instead of 100" guard.
+
+**Exact location:** `RiskEngine::check_fat_finger` in
+`risk/risk_engine.cpp`; the reason `EngineResult::QuantityTooLarge` in
+`core/Events.hpp`.
+
+**The one subtlety — the boundary.** The check is `qty > max` (strictly
+greater), so a quantity *exactly at* the ceiling is accepted. This is a
+deliberate, tested boundary (`FatFingerTest.ExactlyAtMaxAccepted`): "max
+order quantity" means "the largest allowed," not "one less than the
+smallest disallowed." Off-by-one errors on limit checks are a classic
+bug, so the boundary is pinned by tests on both sides (at-max accepted,
+max+1 rejected).
+
+**Why it applies to market orders too:** Unlike the price checks, a
+fat-finger is about size, which every order has. So `run_checks` runs it
+regardless of order type. `FatFingerTest.AppliesToMarketOrdersToo` pins
+this.
+
+**Complexity:** O(1) — one integer comparison.
+
+**Benefits/drawbacks:** Cheap, obviously correct. No real tradeoff; the
+only judgment call is the boundary convention, made explicit above.
+
+**Alternatives considered:** None meaningful — a quantity ceiling is a
+single comparison. (Per the learning-doc policy, "no real alternative" is
+an acceptable honest answer here rather than a manufactured one.)
+
+**How this connects:** First real check in the `RiskEngine` skeleton
+(T7); establishes the reject-vs-forward branching that T9/T10 reuse.
+
+**Check your understanding:**
+- If `max_order_qty` is 100, is an order for exactly 100 accepted or
+  rejected, and which test proves it?
+
+### T9 — Tick-size check (R4)
+
+**What it does:** Rejects a limit order whose price isn't an exact
+multiple of the configured tick size (e.g. with a 25-tick size, 100 and
+125 are fine, 101 is rejected). This is the tick validation deferred all
+the way back in Phase 1.
+
+**Exact location:** `RiskEngine::check_tick_size` in
+`risk/risk_engine.cpp`; reason `EngineResult::TickSizeMisaligned`.
+
+**Why it's pure integer modulo — and why that matters:** The check is
+`price.value % tick_size.value != 0`. Because prices are integer ticks
+(the whole reason for the no-float rule), "aligned to the tick" is
+literally "divisible by the tick," which is exact integer arithmetic with
+no rounding ambiguity. If prices were floating-point dollars, "is 100.05 a
+multiple of 0.05?" would be a nightmare of epsilon comparisons. This is a
+concrete payoff of the integer-price decision from Phase 1 — a whole
+class of bug simply doesn't exist.
+
+**Why market orders skip it:** A `MarketOrder` has no price field at all
+(structurally — see the Phase 1 `NewOrder` section). `run_checks` passes
+`nullptr` for the price on market orders, so the tick and band checks are
+skipped. You can't misalign a price that doesn't exist.
+`TickSizeMisaligned` can only come from a limit order.
+
+**The defensive branch:** if `tick_size <= 0` (a misconfiguration, not
+client input), the check is skipped rather than rejecting everything —
+there's no meaningful alignment to test against. This is a "don't punish
+the client for the operator's mistake" choice.
+
+**Complexity:** O(1) — one modulo.
+
+**Alternatives considered and rejected:**
+- *Store an explicit "valid price grid"* — rejected: a modulo against a
+  single tick size is simpler and covers the requirement.
+
+**How this connects:** Reuses the reject-vs-forward flow from T8. Depends
+on the integer-price invariant from Phase 1 (`Price` section). Closes a
+Phase 1 deferral.
+
+**Check your understanding:**
+- Why is tick alignment a trivial exact check here but would be a
+  floating-point hazard if prices were dollars-and-cents doubles?
+- Why can a market order never produce `TickSizeMisaligned`?
+
+### T10 — Price-band check + reference tracking (R2, Q4)
+
+**What it does:** Rejects a limit order whose price is too far from a
+reference price — a "fat-finger for price" guard (e.g. reject anything
+more than 10% off the reference). The reference starts at a value seeded
+in config and then follows the market by tracking the last trade price.
+
+**Exact locations:** `RiskEngine::check_price_band` and
+`update_reference_from` in `risk/risk_engine.cpp`; the `reference_price_`
+member; reason `EngineResult::PriceOutOfBand`.
+
+**The cold-start problem this solves (Q4) — the important design point.**
+The obvious way to define the reference is "the last trade price." But on
+a fresh, empty book, no trade has happened yet — so that definition is
+*undefined* at startup, and the tempting shortcut is to just skip the band
+check until the first trade. That's a silent hole: during the exact
+window when the book is thin and fat-finger prices are most dangerous,
+the guard would be off. Q4 explicitly rejected that. The fix: **require a
+static reference price at construction** (`initial_reference_price`), so
+the band is active from the very first order. Once real trades occur, the
+reference migrates to the last trade price so it tracks the market. The
+static seed removes the undefined window; the tracking keeps it current.
+`PriceBandTest.ColdStartEmptyBookStillEnforcesBand` is the test that pins
+the whole point — an out-of-band order is rejected on an empty book with
+no trades.
+
+**How the float stays out of the comparison:** `price_band_pct` is a
+`double`, but the check converts it to an *integer* tick allowance once
+(`round(reference * pct)`), then compares `abs(price - reference) >
+allowance` in pure integers. So the fractional percentage is used exactly
+once to compute a bound, and the accept/reject decision is integer. The
+boundary is `>` (strictly outside), so a price *exactly* at the band edge
+is accepted — tested on both edges (`ExactlyAtUpperEdgeAccepted`,
+`ExactlyAtLowerEdgeAccepted`) and just beyond
+(`JustAboveUpperEdgeRejected`).
+
+**Reference tracking mechanics:** after a successful forward,
+`update_reference_from` looks at the response's `trades` and, if any
+occurred, sets the reference to the last trade's price (trades are
+appended in fill order, so `.back()` is the most recent).
+`ReferenceTracksLastTradePrice` verifies the band re-centres after a trade.
+
+**The defensive branch:** if the band percentage or the reference is
+non-positive, the check is skipped — but note this is NOT the Q4 hole. Q4
+was about *silently* skipping because the reference was undefined; here
+the reference is always defined (seeded at construction), so reaching the
+skip branch means the *operator* deliberately configured a zero/negative
+band, which is a config choice, not an undefined-startup accident.
+
+**Complexity:** O(1) per check (one multiply, one round, one abs, one
+compare). Reference update is O(1) — reads the last trade.
+
+**Benefits:** Guard active from t=0 (no cold-start hole); tracks the
+market; integer comparison keeps it exact.
+
+**Drawbacks / tradeoffs accepted:**
+- The reference is "last trade price," which can be stale or jumpy in thin
+  markets. A production venue might use a smoothed/volume-weighted
+  reference. Accepted as out-of-scope — the requirement is a band, not a
+  fair-value model.
+- One `double` multiply + `llround` per limit order. Negligible, and it
+  stays in the risk layer.
+
+**Alternatives considered and rejected:**
+- *Skip the band until the first trade* — rejected: the Q4 hole.
+- *Reference = mid-price of current best bid/ask* — plausible and
+  arguably better, but undefined when one side is empty (same cold-start
+  problem in a different disguise), and it would couple the risk layer to
+  book internals. The static-seed-then-last-trade rule is simpler and
+  always defined.
+
+**How this connects:** Consumes `EngineResponse.trades` (Phase 1's
+`Events.hpp`) to track the reference. Reuses the reject-vs-forward flow
+from T8/T9. Directly implements the Q4 resolution from
+`requirements.md §5`.
+
+**Check your understanding:**
+- Why does seeding the reference at construction (rather than "first
+  trade sets it") matter, and which test would fail if you removed the
+  seed and skipped the check on an empty book?
+- Where exactly does the `double` band percentage stop being a `double`,
+  and why does that keep the no-float rule intact?
+
+### T11 — Distinct rejection reasons (R6)
+
+**What it does:** Gives each risk rule its own `EngineResult` value, so a
+client learns *why* it was rejected — "your price is out of band" vs.
+"your tick size is wrong" vs. "your order is too big" — not a generic
+"rejected."
+
+**Exact location:** `core/Events.hpp` — `PriceOutOfBand`,
+`QuantityTooLarge`, `TickSizeMisaligned` (added here);
+`SelfTradePrevented` landed earlier in T5. Wired through the checks in
+`risk/risk_engine.cpp`.
+
+**Why distinct values and not a single `Rejected` + a message string:**
+An enum is cheap, switchable, and protocol-friendly — the binary/text
+protocol adapters can map each reason to a wire code without parsing
+prose. A free-text message would be heavier to carry and impossible to
+branch on. This mirrors how the engine already reports
+`DuplicateOrderId`/`InvalidPrice` etc. as distinct codes.
+
+**The naming-convention detail:** the existing values are reason-named
+and un-prefixed (`DuplicateOrderId`, not `RejectedDuplicate`). An earlier
+draft of the design used a `Rejected*` prefix; that was corrected to match
+the convention, so the enum reads uniformly. Small thing, but consistency
+in an enum a recruiter will read matters.
+
+**Complexity:** None — enum values.
+
+**Alternatives considered and rejected:**
+- *Single `Rejected` + `std::string reason`* — rejected: not
+  branch-able, heavier on the wire, inconsistent with existing codes.
+
+**How this connects:** Completes R6. The reasons flow out through the same
+`EngineResponse.status` channel every other outcome uses (Phase 1). The
+protocol adapters (Phases 5/7) already switch on `EngineResult`, so they
+extend naturally.
+
+**Check your understanding:**
+- Why is a distinct enum value better than a human-readable rejection
+  string for a protocol gateway to consume?
+
+### T12 — Reused-OrderId test (NFR2, end to end through the decorator)
+
+**What it does:** Proves that an order rejected by a *risk* check consumes
+no `OrderId` — you can resubmit the same ID with a valid order and it's
+accepted. If risk rejection leaked the ID into the engine's
+lifetime-uniqueness set, the resubmit would wrongly get
+`DuplicateOrderId`.
+
+**Exact location:** `ReusedOrderIdTest` in `tests/risk_engine_test.cpp`
+(one case per rejection reason), plus `IdNotReusableAfterAcceptance` as
+the contrast case.
+
+**Why this holds "for free" — the mechanism.** The engine records an ID in
+`ever_seen_ids_` *inside* `MatchingEngine::submit`, after its own
+validation (confirmed in T5's NFR2 analysis / design.md §7). The
+`RiskEngine` decorator runs its checks *before* calling `inner_->submit()`.
+So a risk-rejected order never reaches the line that records the ID —
+there's no cleanup code, no rollback, nothing to remember to undo. The
+guarantee falls out of the ordering: check first, delegate second. The
+test suite makes that invisible property visible and regression-proof.
+
+**Why the contrast test matters:** `IdNotReusableAfterAcceptance` submits
+a *valid* order, then resubmits the same ID and expects
+`DuplicateOrderId`. Without it, the reused-ID tests could pass simply
+because duplicate detection was broken entirely. The contrast proves the
+mechanism is real: accepted IDs *are* consumed, rejected ones are *not*.
+This "prove the negative isn't a false positive" instinct is worth
+copying.
+
+**Complexity:** Test-only.
+
+**How this connects:** Verifies NFR2 (requirements.md §3) through the full
+decorator+engine stack. Depends on the `ever_seen_ids_` ordering
+documented in T5 and design.md §7, and on the decorator's check-before-
+delegate structure from T7.
+
+**Check your understanding:**
+- Why does the decorator's ordering (checks before `inner_->submit()`)
+  make NFR2 automatic, with no rollback code?
+- What would `IdNotReusableAfterAcceptance` catch that the three
+  reused-ID tests alone would not?
+
+### T13 — Composition-root wiring + end-to-end integration
+
+**What it does:** Actually inserts the `RiskEngine` between the network
+gateway and the matching engine in `apps/exchange_server`, so risk checks
+are live on the real order path. Also adds integration tests that drive
+the full `RiskEngine → MatchingEngine` stack the same way the server's
+engine thread does.
+
+**Exact locations:** `apps/exchange_server/main.cpp` (constructs
+`MatchingEngine`, wraps it in `RiskEngine`, hands out an `EngineAPI&`);
+`CompositionRootTest` in `tests/risk_engine_test.cpp`; the `risk` library +
+`exchange_server` link updated in `CMakeLists.txt`.
+
+**The "single entry point" discipline — why it's load-bearing.** The
+server constructs the concrete `MatchingEngine`, wraps it, and then binds
+`EngineAPI& engine = risk_engine`. Every downstream use goes through that
+reference. This is deliberate: NFR2 and the whole risk guarantee rely on
+there being *no way to reach the engine except through the decorator*. If
+some code path held the concrete `MatchingEngine&` and called it directly,
+it would bypass every risk check. Typing the downstream as `EngineAPI&`
+(not `MatchingEngine&`) enforces "you can only do what the port allows,"
+and the port is what the decorator also implements. design.md §7 calls
+this out as an architectural expectation; the wiring is where it's
+actually honoured.
+
+**How the STP config crosses the boundary here:** the same `RiskConfig`
+seeds two things — the decorator (for the three pre-trade checks) *and*,
+via `config.stp()`, the `MatchingEngine` constructor (for STP, which runs
+in the match loop). One config object, two consumers, because STP is
+architecturally split from the other checks (T5). The composition root is
+the single place that knows both halves exist and connects them.
+
+**Why the integration test reproduces the dispatch instead of launching
+the server:** `apps/exchange_server` is Linux-only (epoll/eventfd), so it
+can't run on the Windows build. The test instead constructs the identical
+`RiskEngine`-over-`MatchingEngine` stack, exposes it as `EngineAPI&`, and
+drives it with `TaggedCommand`s through a dispatch helper that mirrors the
+server's engine-thread loop (tag owner from client, then submit). It
+verifies each rejection reason end to end, that STP is active through the
+stack, that a risk-rejected ID is reusable (NFR2 end to end), and that
+cancels still flow. It's the same composition the server uses, minus the
+sockets.
+
+**Complexity:** Wiring is O(1) construction. Tests are the meaningful
+deliverable.
+
+**Benefits:** Risk is now real on the order path, not just unit-tested in
+isolation; the single-entry-point invariant is established at the one
+place that matters.
+
+**Drawbacks / tradeoffs accepted:**
+- The integration test *reproduces* the server's dispatch rather than
+  executing the actual `main.cpp`, so a divergence between the two could
+  in principle go uncaught on non-Linux. Mitigated by keeping the dispatch
+  logic tiny and identical; the real server path is exercised by the
+  Linux CI/e2e tests.
+
+**How this connects:** Ties together T5 (engine STP), T7–T11 (decorator
+checks), and the Phase 5 gateway dispatch (where T3 threads the owner).
+The `EngineAPI` port from Phase 1 is what makes the swap invisible to the
+gateway. This is the phase's integration capstone.
+
+**Check your understanding:**
+- Why is `engine` in `main.cpp` typed as `EngineAPI&` rather than
+  `MatchingEngine&` or `RiskEngine&`, and what guarantee would break if
+  someone held the concrete `MatchingEngine&` and used it?
+- One `RiskConfig` configures two different objects. Which two, and why is
+  it split that way?
+
+### T14 — Correcting Phase 5's stale `ClientId` documentation
+
+**What it does:** Fixes `specs/phase-05-tcp-gateway/design.md`, which
+still showed `using ClientId = uint64_t;` (a plain alias) and fields named
+`client_id`. The shipped code always used a strong wrapper `struct
+ClientId` with a field named `client`. The doc was corrected to match, with
+a note explaining the correction.
+
+**Exact location:** `specs/phase-05-tcp-gateway/design.md` — the type
+snippet and the design-rationale bullet, both updated with a dated
+"corrected in Phase 8 / T14" note.
+
+**Why bother with a doc-only fix in a code phase:** The learning-doc
+policy is explicit that the docs must not go stale relative to the code —
+a spec that contradicts the implementation is a trap for the next reader
+(and for a recruiter reading the specs). Phase 8 is the phase that finally
+*consumes* `ClientId` in the engine, and the strong-typed wrapper is
+exactly what made that retrofit safe (a bare `uint64_t` alias would have
+let `ClientId` and `OrderId` interchange silently). So this is the natural
+moment to reconcile the record: the decision the code made turned out to
+be the right one for Phase 8, and the doc now says so.
+
+**Why leave a note rather than silently rewrite:** The policy says when a
+later phase changes something documented earlier, explain the delta rather
+than pretend it was always so. The dated note ("this previously said X;
+the implementation never followed it; corrected here") is honest about the
+history and points at ADR-006 for the real rationale.
+
+**Complexity/cost:** Documentation only. No code, no tests.
+
+**How this connects:** Closes the loop on the `ClientId` retrofit that
+T1–T3 relied on. The strong-type decision (Phase 5, ADR-006) is what T5's
+STP and T2's `Order.owner` are built on — this task makes the Phase 5 spec
+tell that story accurately.
+
+**Check your understanding:**
+- Why would a bare `using ClientId = uint64_t;` alias have been a latent
+  hazard for Phase 8's self-trade prevention specifically?
+
+---
+
+## Phase 9 — Minimal FIX Parser
+
+FIX (Financial Information eXchange) is the text protocol most of the
+world's electronic trading actually speaks. Phase 9 builds a *minimal*
+FIX adapter — just three message types (NewOrderSingle, OrderCancelRequest,
+ExecutionReport) — enough to demonstrate real understanding of the
+protocol's mechanics without pretending to be a spec-complete engine
+(explicitly a non-goal per the Charter).
+
+The adapter lives in `adapters/fix/` and is written against `EngineAPI`,
+so — like the TCP adapter — it composes with Phase 8's `RiskEngine`
+decorator for free: a FIX order flows through the same risk checks as a
+TCP order.
+
+### FIX wire format, from first principles
+
+A FIX message is a flat sequence of `tag=value` fields, each terminated
+by a single **SOH** byte (`0x01`, "Start of Heading"). It is *not*
+pipe-delimited — the `|` you see in documentation and logs is a
+human-readable stand-in for the invisible SOH. So a NewOrderSingle looks
+like (SOH shown as `|`):
+
+```
+8=FIX.4.2|9=65|35=D|49=CLIENT|56=EX|34=2|52=...|11=42|55=MINI|54=1|40=2|44=10000|38=50|10=123|
+```
+
+Tags are integers with fixed meanings: `8`=BeginString, `9`=BodyLength,
+`35`=MsgType, `11`=ClOrdID, `54`=Side, `44`=Price, `38`=OrderQty,
+`10`=CheckSum, and so on. The message is self-describing by tag number,
+which is why FIX tolerates missing optional fields and extension tags —
+you look up by number, not by position.
+
+Two envelope tags are structural and must bracket every message:
+`9` (BodyLength) near the front and `10` (CheckSum) at the very end.
+These let a receiver reading a byte stream know where one message ends
+and validate it wasn't corrupted, before interpreting any business
+meaning.
+
+### `FixError` (design §5) — why one reason per failure
+
+**What / where:** `adapters/fix/FixError.hpp` — a `FixErrorReason` enum
+(12 distinct reasons) plus a `FixError` struct carrying the reason, the
+offending tag number, and a human-readable detail string.
+
+**Why distinct reasons, not a bool or a generic exception:** FIX
+debugging in the real world is almost entirely "which tag was wrong?"
+A gateway that says "parse failed" is useless at 3am; one that says
+"tag 44 (Price) missing on a Limit order" is actionable. NFR1 makes this
+a hard requirement, so every rejection path produces a specific reason.
+This also fits the engine's existing philosophy: expected bad input is a
+*returned value*, never a thrown exception (exceptions are reserved for
+programming errors). The parser returns `std::variant<Result, FixError>`
+everywhere.
+
+**Complexity/tradeoffs:** trivial (an enum). The only cost is the
+discipline of choosing the right reason at each site rather than reusing
+a generic one — which is the entire point.
+
+### `FixMessage` — tokenizing and envelope validation (design §2)
+
+**What / where:** `adapters/fix/FixMessage.hpp/.cpp`. Two layers:
+`tokenize()` splits raw bytes into a `TagMap` (ordered list of
+`(tag, value)` pairs); `parse_validated()` additionally checks the
+CheckSum and BodyLength before returning.
+
+**Why tokenizing is separated from business parsing:** envelope
+validation (checksum, length) is *purely mechanical* — it doesn't care
+whether the message is an order or a cancel. Keeping it in `FixMessage`,
+independent of `FixParser`'s tag-meaning logic, means a corrupt envelope
+is rejected before any business tag is even looked at, and the two
+concerns are testable in isolation. This is the same "layer the
+mechanical part below the semantic part" instinct as separating framing
+from parsing in the TCP adapter (Phase 5).
+
+**Why `TagMap` is an ordered list, not an `unordered_map<int,string>`:**
+FIX permits repeated tags, and for messages with repeating groups order
+matters. Our 3-message subset has no repeating groups, so first-match
+lookup is correct — but modelling it as an ordered list with a
+first-match `get()` keeps the door open and is honest about FIX's actual
+shape (a map would silently lose duplicate tags).
+
+**The CheckSum algorithm (tag 10) — exactly:** sum every byte of the
+message *up to and including the SOH immediately before* `10=`, take it
+modulo 256, and format as a **3-digit zero-padded** decimal. That's it —
+it's a weak integrity check (not cryptographic), designed to catch
+truncation and line noise. The subtlety that trips people up: the
+checksum covers the bytes *before* the checksum field, including the SOH
+that precedes it, and the result is always exactly three characters
+(`10=005`, not `10=5`).
+
+**The BodyLength algorithm (tag 9) — exactly:** the number of bytes from
+*immediately after* the SOH that terminates the BodyLength field itself,
+up to *and including* the SOH just before `10=`. In other words, it
+counts everything between the two envelope tags: not the `8=...|9=...|`
+prefix, not the `10=...|` suffix, but everything in between. Getting the
+boundaries off by one byte is the classic FIX bug, which is why the
+implementation locates the `|35=` and `|10=` markers explicitly rather
+than trying to count fields.
+
+**Complexity:** tokenizing is O(n) in message length; validation is
+another O(n) pass for the checksum sum. Space is O(number of fields).
+
+**Check your understanding:**
+- Why is the checksum computed over bytes *including* the SOH before
+  `10=` but *excluding* `10=` itself?
+- Why does BodyLength deliberately exclude the `8=`/`9=` header and the
+  `10=` trailer, counting only what's between them?
+
+### `FixParser` — 35=D / 35=F to engine commands (design §3)
+
+**What / where:** `adapters/fix/FixParser.hpp/.cpp`. Dispatches on tag 35:
+`D` → a `NewOrder` (limit or market), `F` → a `CancelRequest`, anything
+else → `UnsupportedMessageType`.
+
+**The ClOrdID compromise (Q1) — worth understanding as a deliberate
+tradeoff, not a shortcut.** Real FIX `ClOrdID` (tag 11) is a *string* —
+often alphanumeric like `ORD-2024-0042`. Our engine's `OrderId` is a
+`uint64_t`. Two options existed: (a) parse ClOrdID as a numeric literal
+and reject non-numeric ones, or (b) maintain a string↔uint64 mapping
+table in the adapter. We chose (a). Why: option (b) is exactly the kind
+of speculative machinery the Charter forbids — it adds per-session state
+and a lookup table for a "minimal" parser whose stated goal is
+demonstrating understanding, not spec-completeness. The cost is honestly
+acknowledged: this parser is *not* fully FIX-compliant on ClOrdID
+formats, and a test (`NonNumericClOrdIdRejected`) pins that as
+deliberate behavior, not an accident.
+
+**Why Q3 (cancel correlation) then falls out for free:** in real FIX, a
+cancel (`35=F`) references the original order via `41` (OrigClOrdID) and
+carries its *own* new `11` (ClOrdID) for the cancel request itself —
+which normally forces the adapter to keep a ClOrdID↔OrderId table. But
+because we made ClOrdID numeric-and-equal-to-OrderId (Q1), tag 41 *is*
+the OrderId to cancel, directly. So the parser is completely stateless
+with respect to correlation — it prefers tag 41, falls back to tag 11,
+and hands the number straight to `cancel(OrderId)`. One design decision
+(Q1) collapsed two problems.
+
+**Why every out-of-scope value is a distinct rejection, not a silent
+skip:** R1 requires clean rejection. So an unknown side (`54=9`), an
+unsupported order type (`40=7`), a wrong symbol (`55=AAPL`), a missing
+price on a limit order — each returns its own `FixError`. Nothing is
+silently dropped or defaulted. There's one test per reason.
+
+**How `owner` is threaded (Phase 8 dependency):** a `NewOrder` needs a
+`ClientId owner` for self-trade prevention (Phase 8). The parser takes
+`owner` as a parameter and stamps it on the produced order — it does not
+invent session identity itself. The mapping "which FIX session →ClientId"
+belongs one layer up, in `FixSession`. Because Phase 8 landed before this
+phase, the design's "stub it if Phase 8 isn't ready" contingency was
+unnecessary: this is the real mapping.
+
+**Check your understanding:**
+- How did making ClOrdID numeric (Q1) eliminate the need for a
+  ClOrdID↔OrderId correlation table on cancels (Q3)?
+- Why does the parser take `owner` as a parameter instead of reading a
+  FIX tag for it?
+
+### `FixEncoder` — building 35=8 ExecutionReport (design §4)
+
+**What / where:** `adapters/fix/FixEncoder.hpp/.cpp`. Turns an
+`EngineResponse` (+ the originating order's identity) into a wire-ready
+`35=8` message. One encoder == one session: it owns the per-session
+`MsgSeqNum` (34) and `ExecID` (17) counters.
+
+**The OrdStatus mapping (tag 39) — the semantic core.** The engine
+speaks in `EngineResult` + fills; FIX clients speak in OrdStatus codes.
+The encoder maps between them: `0`=New (accepted, nothing filled),
+`1`=PartiallyFilled, `2`=Filled, `4`=Cancelled, `8`=Rejected. The
+"filled vs partially filled" decision compares total filled quantity
+(summed across `response.trades`) against the *original* order quantity —
+which is why the encoder needs the originating order's identity
+(`ExecReportContext`), since `EngineResponse` alone doesn't carry the
+original size for a resting or rejected order. A successful `cancel()`
+maps to `4` via an explicit `is_cancel` flag, because an accepted cancel
+and an accepted-but-unfilled new order both have `EngineResult::Accepted`
+with zero fills — the flag disambiguates them.
+
+**Why BodyLength and CheckSum are computed last, in that order:** you
+can't know BodyLength until the body is fully built, and you can't
+compute CheckSum until BodyLength (part of the byte stream) is in place.
+So the encoder builds the body first, prepends `8=`/`9=<len>`, then sums
+the whole thing for `10=`. This mirrors the spec's own field ordering
+and is the only order that produces a self-consistent message.
+
+**Complexity:** O(message length) — a few string appends plus two linear
+passes (bodylength is just the body size; checksum sums the bytes).
+
+### `FixSession` — the composition point (design §6)
+
+**What / where:** `adapters/fix/FixSession.hpp/.cpp`. Holds an
+`EngineAPI&`, a `ClientId`, and a `FixEncoder`. `handle_message(raw)`
+runs the whole pipeline: validate envelope → parse → submit/cancel
+through the engine → encode the ExecutionReport.
+
+**Why it takes `EngineAPI&`, not `MatchingEngine&`:** this is the payoff
+of the ports-and-adapters design again. By depending on the port, the
+same FIX session works against a bare engine (in tests) or a
+`RiskEngine`-wrapped engine (in production) with no code change — a FIX
+order automatically goes through Phase 8's fat-finger/tick/band/STP
+checks. The session is where "this FIX counterparty" becomes "this
+`ClientId`", exactly the role a TCP connection's ephemeral ClientId plays
+in the TCP adapter.
+
+**Drawback / tradeoff accepted:** for a cancel, the session doesn't know
+the original order's side/quantity (the `35=F` message doesn't carry
+them), so it reports placeholders — fine, because a cancel-ack's
+meaningful content is OrdStatus=Cancelled + the OrderID, which it does
+have. A fuller implementation would look up the resting order's details;
+out of scope for a minimal parser.
+
+**How this connects:** consumes Phase 1's `NewOrder`/`EngineResponse`,
+Phase 4's `CancelRequest`, Phase 8's `ClientId owner`, and the
+`EngineAPI` port from Phase 1. It's a sibling of the Phase 5 TCP adapter
+and Phase 7 binary adapter — a third wire format feeding the same engine.
+
+**Check your understanding:**
+- Why can the FIX session run unchanged against either a `MatchingEngine`
+  or a `RiskEngine`, and what property of the design guarantees that?
+- Why does the encoder need an `ExecReportContext` (original order id /
+  side / qty) rather than working from the `EngineResponse` alone?
+- Why must CheckSum be computed after BodyLength, and BodyLength after
+  the body is complete?
+
+---
+
+## Phase 10 — Strategy SDK
+
+The final phase adds a tiny SDK for writing *strategies* — algorithmic
+clients that generate order flow — plus two examples (a market maker and
+a momentum trader) and a runner that drives them against a live engine.
+The explicit goal (Charter non-goal made positive): **generate realistic
+synthetic order flow** to exercise the whole exchange, not to make money.
+
+### `Strategy` interface (design §2)
+
+**What / where:** `strategy/Strategy.hpp`. A base class with three virtual
+hooks — `on_response` (outcome of my own submit/cancel), `on_trade` (a
+market-data trade, from anyone), `on_tick` (a periodic nudge) — plus a
+protected injected `EngineAPI& engine_` and a fixed `ClientId id_`.
+
+**Why it reuses the engine's existing shapes instead of inventing new
+ones:** `on_trade` takes the same `Trade` the `EventSink` already
+broadcasts (Phase 1/6); `on_response` takes the same `EngineResponse`
+that `submit` already returns. This is deliberate — a strategy is just
+another observer/caller, so it speaks the vocabulary the engine already
+has. Inventing a parallel "strategy event" type would imply strategies
+are privileged, which is exactly what NFR1 forbids.
+
+**Why NFR1 ("no bypass") matters and how the interface enforces it:** a
+strategy has *no* method that reads book state directly — no
+`get_best_bid()`, no peek at `OrderBook`. Everything it knows, it learns
+from `on_trade`/`on_response`, and everything it does, it does through
+`engine_.submit`/`cancel`. So a strategy is provably no more powerful
+than a TCP client: it sees the tape and its own fills, nothing more. This
+proves the `EngineAPI`/`EventSink` ports generalize from "human/network
+client" to "algorithmic client" without a special path — the same claim
+hexagonal architecture makes, now demonstrated with a fourth kind of
+adapter-shaped thing.
+
+**Why `ClientId` at construction:** a strategy is a single persistent
+participant for the whole session, so it gets one fixed `ClientId` (the
+same role a TCP connection's ephemeral id plays). This is what makes
+self-trade prevention (Phase 8) meaningful for strategies — the market
+maker's own bid and ask share an owner, so STP stops it from trading with
+itself.
+
+**Check your understanding:**
+- What prevents a `Strategy` from being more powerful than a TCP client —
+  i.e. where would you have to add a method to give it a privileged view,
+  and why is its absence the point?
+
+### `MarketMakerStrategy` (design §3)
+
+**What / where:** `strategy/MarketMakerStrategy.{hpp,cpp}`. Posts a bid at
+`ref - spread` and ask at `ref + spread`; when one side is hit, cancels
+whatever remains and re-posts a fresh two-sided quote.
+
+**The OrderId-namespacing trick — a real correctness detail.** The engine
+enforces *lifetime-unique* OrderIds across *all* clients (Phase 1). Two
+concurrent strategies both minting ids from 1 would collide and get
+`DuplicateOrderId`. So each strategy seeds its id counter at
+`clientId * 1'000'000'000`, giving each a private billion-wide range.
+Cheap, and it sidesteps a bug that would otherwise only surface when two
+strategies run together (exactly the T8 "run both concurrently" case).
+
+**Fill detection is via `on_trade`, not `on_response` — and why that's
+the subtle-but-correct choice.** When *another* participant hits the
+maker's resting bid, the fill happens during *that participant's* submit,
+not the maker's. So the maker never gets an `on_response` for it — it
+finds out via the market-data `on_trade`, by checking whether the trade's
+`buy_order_id`/`sell_order_id` is one of its tracked quote ids. Getting
+this wrong (listening on the wrong hook) would make the maker never
+notice it was hit. It also reads `trade.resting_order_removed` to know
+whether its quote was fully consumed (and thus already gone from the
+book), so it doesn't try to cancel an id that no longer exists.
+
+**Re-quote both sides (design §8 resolution):** on any fill, it cancels
+the still-resting side and re-posts both, keeping a continuous two-sided
+quote. Chosen over "replace only the filled side" because steadier
+two-sided traffic is what this phase wants. Uses cancel-then-new (Q2),
+accepting the brief gap where a competitor could trade through — fine for
+a non-profit-seeking flow generator.
+
+**Complexity:** O(1) per event (a couple of map-free id comparisons and
+at most two engine calls).
+
+**Check your understanding:**
+- Why does the maker detect being hit through `on_trade` rather than
+  `on_response`? Whose `submit()` call actually executes that fill?
+- Why seed each strategy's OrderId counter from its `ClientId`, and which
+  test would fail intermittently without it?
+
+### `MomentumStrategy` (design §4)
+
+**What / where:** `strategy/MomentumStrategy.{hpp,cpp}`. Keeps the last N
+trade prices in a `std::deque` (ring-buffer semantics: push back, pop
+front past N), and when `newest - oldest` exceeds a threshold, fires a
+`MarketOrder` in that direction.
+
+**Why a market order, and why "naive" is correct here:** a market order
+carries no price, so the signal→action mapping is trivial — direction
+only, no price to compute. R3 explicitly says the signal should be naive;
+sophistication is not the goal. The whole strategy is a fire-and-forget
+directional bet per signal, with a much simpler state machine than the
+maker (no resting orders, no re-quote).
+
+**Complexity:** O(1) amortized per trade — a deque push/pop and a
+subtraction.
+
+**Check your understanding:**
+- Why is a market order the natural fit for a momentum signal, versus the
+  limit orders the market maker uses?
+
+### The chicken-and-egg problem the runner exposed (design §8, and a real
+bug caught by *running* it)
+
+**What happened:** with a purely spec-literal implementation — maker
+quotes once and only re-quotes on fills; momentum only acts on trades —
+running the full session produced **zero trades**. The maker's quotes just
+sat there; nothing crossed them (a single maker's own bid/ask can't cross,
+and STP would block it anyway); so no trade ever occurred; so momentum
+never had a tape to react to. The unit tests passed because they *inject*
+trades directly — only *running the runner* surfaced the deadlock. This
+is a good example of why the DoD requires an actual extended session, not
+just unit tests.
+
+**The fix (two small, documented, default-off knobs):**
+- The maker's reference price *drifts* each `on_tick` (`drift_per_tick`),
+  oscillating within a bounded band, so it re-quotes at moving levels.
+- The momentum strategy fires a periodic *probe* market order on
+  `on_tick` (`probe_every_ticks`), crossing a resting maker quote to seed
+  the tape.
+
+Both default to 0 (off), so unit tests see pure spec behavior; the runner
+turns them on. With them on, the session generates ~4000 trades over 3000
+ticks: probes cross the maker's quotes → fills → the maker re-quotes and
+the momentum signal reacts → sustained mixed flow. This is the "reference
+migrates from observed trades" path design §8 explicitly left open, chosen
+because it's what actually makes the generator generate.
+
+**Why this is a legitimate design choice, not a hack:** real markets have
+an exogenous flow source — someone always trades first. In a closed
+simulation with only reactive participants, *something* has to be the
+prime mover, or the system is a static fixed point. Making that explicit
+and configurable (rather than hardcoding random noise) is the honest way
+to model it.
+
+### `apps/strategy_runner` (design §5) and the re-entrancy hazard
+
+**What / where:** `apps/strategy_runner/main.cpp`. Builds a
+`MatchingEngine`, wraps it in a `RiskEngine`, exposes it as `EngineAPI&`,
+constructs the strategies, and runs the tick loop.
+
+**The re-entrancy hazard — worth understanding.** The engine calls
+`EventSink::on_trade` *during* `submit()`. If a strategy submitted an
+order straight from inside `on_trade`, that would call back into the
+engine while the outer `submit()` is still on the stack — re-entrant
+mutation of the book mid-match. The single-threaded engine isn't designed
+for that. The runner avoids it with a **deferred-dispatch sink**: during
+any engine call, the sink only *records* trades into a buffer; after the
+call returns, the runner drains the buffer and dispatches the trades to
+strategies on its *own* stack frame. So every strategy order submission
+happens at the top level, never nested inside another submit. A guard
+counter bounds the drain loop so a pathological cascade can't spin
+forever.
+
+**Why built against `EngineAPI` (NFR1 again):** the runner constructs a
+`RiskEngine` and hands strategies an `EngineAPI&`, so strategy orders flow
+through Phase 8's fat-finger/tick/band/STP checks with zero strategy-side
+awareness. Same composition-root discipline as the exchange server.
+
+**Check your understanding:**
+- Why can't a strategy safely call `engine_.submit()` directly from inside
+  `on_trade`, and how does the runner's deferred-dispatch sink prevent the
+  problem?
+- The runner builds a `RiskEngine`, not a bare `MatchingEngine`. What does
+  a strategy order automatically get as a result, and how much does the
+  strategy code know about it?
+
+### R5 — feeding back into Phase 2 benchmarking
+
+The runner's mixed flow is the more-realistic workload R5 asks for.
+Actually re-running Phase 2's harness with strategy-generated flow (T13)
+and recording the comparison is deferred to the controlled Linux run
+alongside the other benchmark numbers — the same environment caveat as
+Phase 8's `Order`-size benchmark (see `benchmarks/results/`), since
+laptop-under-load numbers here would be noise. The generator that R5
+needs exists and is verified to produce flow; the recorded comparison is
+what waits on the pinned machine.

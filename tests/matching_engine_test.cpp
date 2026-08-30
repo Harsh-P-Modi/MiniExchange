@@ -952,5 +952,246 @@ TEST_F(MatchingEngineTest, CancelRejectionNoEvents) {
     EXPECT_EQ(sink.cancelled.size(), 0u);
 }
 
+// ===========================================================================
+// Phase 8 / T2 — ClientId owner threads onto the resting Order.
+// A limit order submitted with an owner must carry that owner onto the
+// resting Order in the book, so STP (T5) can read it later.
+// ===========================================================================
+TEST_F(MatchingEngineTest, RestingOrderRetainsSubmitterOwner) {
+    LimitOrder order{OrderId{300}, Side::Buy, Price{100}, Quantity{10}};
+    order.owner = ClientId{42};
+    engine.submit(NewOrder{order});
+
+    Order* resting = engine.book().find_order(OrderId{300});
+    ASSERT_NE(resting, nullptr);
+    EXPECT_EQ(resting->owner, ClientId{42});
+}
+
+// A partially-filled incoming limit order that rests keeps its owner on the
+// resting remainder.
+TEST_F(MatchingEngineTest, PartiallyFilledRemainderRetainsOwner) {
+    // Resting sell (owner 7), qty 20.
+    LimitOrder sell{OrderId{310}, Side::Sell, Price{100}, Quantity{20}};
+    sell.owner = ClientId{7};
+    engine.submit(NewOrder{sell});
+
+    // Incoming buy (owner 8), qty 50 — fills 20, rests 30.
+    LimitOrder buy{OrderId{311}, Side::Buy, Price{100}, Quantity{50}};
+    buy.owner = ClientId{8};
+    engine.submit(NewOrder{buy});
+
+    Order* resting = engine.book().find_order(OrderId{311});
+    ASSERT_NE(resting, nullptr);
+    EXPECT_EQ(resting->quantity, Quantity{30});
+    EXPECT_EQ(resting->owner, ClientId{8});
+}
+
+// Default owner (ClientId{0}) when the submitter didn't set one — confirms
+// the defaulted trailing field behaves as documented.
+TEST_F(MatchingEngineTest, RestingOrderDefaultsOwnerToZeroWhenUnset) {
+    engine.submit(NewOrder{LimitOrder{OrderId{320}, Side::Buy, Price{100}, Quantity{10}}});
+
+    Order* resting = engine.book().find_order(OrderId{320});
+    ASSERT_NE(resting, nullptr);
+    EXPECT_EQ(resting->owner, ClientId{0});
+}
+
+// ===========================================================================
+// Phase 8 / T5 — Self-trade prevention (R5), in the engine match loop.
+// ===========================================================================
+
+// Helper to build a limit order with an explicit owner.
+static LimitOrder owned_limit(uint64_t id, Side side, int64_t price,
+                              uint64_t qty, uint64_t owner) {
+    LimitOrder o{OrderId{id}, side, Price{price}, Quantity{qty}};
+    o.owner = ClientId{owner};
+    return o;
+}
+
+static MarketOrder owned_market(uint64_t id, Side side, uint64_t qty,
+                                uint64_t owner) {
+    MarketOrder o{OrderId{id}, side, Quantity{qty}};
+    o.owner = ClientId{owner};
+    return o;
+}
+
+// --- RejectIncoming (default policy) ---
+
+class StpRejectTest : public ::testing::Test {
+protected:
+    RecordingEventSink sink;
+    MatchingEngine engine{&sink, 1'000'000,
+                          StpConfig{true, StpPolicy::RejectIncoming}};
+};
+
+// Same-owner cross is rejected with SelfTradePrevented, and — critically —
+// consumes no OrderId, emits no events, and leaves the resting order intact.
+TEST_F(StpRejectTest, SameOwnerCrossRejectedWithNoSideEffects) {
+    // Client 1 rests a sell at 100.
+    engine.submit(NewOrder{owned_limit(1, Side::Sell, 100, 10, /*owner=*/1)});
+    sink.accepted.clear();
+    sink.trades.clear();
+    sink.cancelled.clear();
+
+    // Client 1 submits a buy that would cross its own sell.
+    auto resp =
+        engine.submit(NewOrder{owned_limit(2, Side::Buy, 100, 10, /*owner=*/1)});
+
+    EXPECT_EQ(resp.status, EngineResult::SelfTradePrevented);
+    EXPECT_TRUE(resp.trades.empty());
+    EXPECT_EQ(resp.remaining_qty, Quantity{0});
+
+    // Resting sell untouched; incoming order did NOT rest.
+    EXPECT_EQ(engine.book().order_count(), 1u);
+    EXPECT_NE(engine.book().find_order(OrderId{1}), nullptr);
+    EXPECT_EQ(engine.book().find_order(OrderId{2}), nullptr);
+
+    // No events at all from the rejected order.
+    EXPECT_EQ(sink.accepted.size(), 0u);
+    EXPECT_EQ(sink.trades.size(), 0u);
+    EXPECT_EQ(sink.cancelled.size(), 0u);
+}
+
+// The rejected OrderId is NOT consumed — it can be reused successfully.
+TEST_F(StpRejectTest, RejectedOrderIdNotConsumed) {
+    engine.submit(NewOrder{owned_limit(1, Side::Sell, 100, 10, /*owner=*/1)});
+
+    // Rejected self-cross using OrderId 2.
+    auto rejected =
+        engine.submit(NewOrder{owned_limit(2, Side::Buy, 100, 10, /*owner=*/1)});
+    ASSERT_EQ(rejected.status, EngineResult::SelfTradePrevented);
+
+    // Reuse OrderId 2 from a DIFFERENT client, non-crossing — must succeed.
+    auto reused =
+        engine.submit(NewOrder{owned_limit(2, Side::Buy, 90, 10, /*owner=*/2)});
+    EXPECT_EQ(reused.status, EngineResult::Accepted);
+}
+
+// Different-owner cross proceeds normally (STP only guards same owner).
+TEST_F(StpRejectTest, DifferentOwnerCrossProceeds) {
+    engine.submit(NewOrder{owned_limit(1, Side::Sell, 100, 10, /*owner=*/1)});
+    auto resp =
+        engine.submit(NewOrder{owned_limit(2, Side::Buy, 100, 10, /*owner=*/2)});
+
+    EXPECT_EQ(resp.status, EngineResult::Accepted);
+    ASSERT_EQ(resp.trades.size(), 1u);
+    EXPECT_EQ(resp.trades[0].quantity, Quantity{10});
+    EXPECT_EQ(engine.book().order_count(), 0u);
+}
+
+// A same-owner order that does NOT cross (price doesn't reach) is accepted
+// and rests — STP only fires on an actual would-cross.
+TEST_F(StpRejectTest, SameOwnerNonCrossingRestsNormally) {
+    engine.submit(NewOrder{owned_limit(1, Side::Sell, 100, 10, /*owner=*/1)});
+    // Buy at 90 — below the ask, does not cross.
+    auto resp =
+        engine.submit(NewOrder{owned_limit(2, Side::Buy, 90, 10, /*owner=*/1)});
+
+    EXPECT_EQ(resp.status, EngineResult::Accepted);
+    EXPECT_TRUE(resp.trades.empty());
+    EXPECT_EQ(engine.book().order_count(), 2u);
+}
+
+// Market order self-cross is rejected too (nullopt limit scans all levels).
+TEST_F(StpRejectTest, SameOwnerMarketCrossRejected) {
+    engine.submit(NewOrder{owned_limit(1, Side::Sell, 100, 10, /*owner=*/7)});
+    auto resp = engine.submit(NewOrder{owned_market(2, Side::Buy, 5, /*owner=*/7)});
+
+    EXPECT_EQ(resp.status, EngineResult::SelfTradePrevented);
+    EXPECT_EQ(engine.book().order_count(), 1u);  // resting sell intact
+}
+
+// STP does not fire against a same-owner order sitting BEHIND a
+// different-owner order the incoming would fill first — but our pre-scan is
+// conservative: it rejects if ANY crossable same-owner order exists. Verify
+// that documented behavior (reject even if a different-owner order is in front).
+TEST_F(StpRejectTest, RejectsWhenSameOwnerRestsBehindOtherOwnerAtCrossablePrice) {
+    // Two sells at 100: client 2 first (FIFO front), client 1 behind.
+    engine.submit(NewOrder{owned_limit(1, Side::Sell, 100, 10, /*owner=*/2)});
+    engine.submit(NewOrder{owned_limit(2, Side::Sell, 100, 10, /*owner=*/1)});
+
+    // Client 1 buys enough to reach its own resting order at the same level.
+    auto resp =
+        engine.submit(NewOrder{owned_limit(3, Side::Buy, 100, 20, /*owner=*/1)});
+
+    EXPECT_EQ(resp.status, EngineResult::SelfTradePrevented);
+    // Nothing traded, both sells intact.
+    EXPECT_EQ(engine.book().order_count(), 2u);
+}
+
+// --- CancelResting policy ---
+
+class StpCancelTest : public ::testing::Test {
+protected:
+    RecordingEventSink sink;
+    MatchingEngine engine{&sink, 1'000'000,
+                          StpConfig{true, StpPolicy::CancelResting}};
+};
+
+// Same-owner resting order is cancelled (not traded), incoming proceeds.
+TEST_F(StpCancelTest, SameOwnerRestingCancelledIncomingProceeds) {
+    // Client 1 rests a sell at 100, qty 10.
+    engine.submit(NewOrder{owned_limit(1, Side::Sell, 100, 10, /*owner=*/1)});
+    sink.cancelled.clear();
+    sink.trades.clear();
+
+    // Client 1 submits a buy at 100, qty 10 — would self-cross.
+    // Policy: cancel the resting sell, let the buy proceed. With no other
+    // liquidity, the buy then rests.
+    auto resp =
+        engine.submit(NewOrder{owned_limit(2, Side::Buy, 100, 10, /*owner=*/1)});
+
+    EXPECT_EQ(resp.status, EngineResult::Accepted);
+    EXPECT_TRUE(resp.trades.empty());  // no self-trade occurred
+
+    // Resting sell was cancelled (event emitted), incoming buy now rests.
+    ASSERT_EQ(sink.cancelled.size(), 1u);
+    EXPECT_EQ(sink.cancelled[0].id, OrderId{1});
+    EXPECT_EQ(engine.book().find_order(OrderId{1}), nullptr);  // gone
+    Order* buy = engine.book().find_order(OrderId{2});
+    ASSERT_NE(buy, nullptr);
+    EXPECT_EQ(buy->quantity, Quantity{10});  // rested unfilled
+}
+
+// CancelResting pulls the same-owner order but still trades against a
+// different-owner order at the same level.
+TEST_F(StpCancelTest, CancelsOwnRestingButTradesWithOthers) {
+    // Sell at 100 from client 1 (front), then sell at 100 from client 2.
+    engine.submit(NewOrder{owned_limit(1, Side::Sell, 100, 10, /*owner=*/1)});
+    engine.submit(NewOrder{owned_limit(2, Side::Sell, 100, 10, /*owner=*/2)});
+    sink.cancelled.clear();
+    sink.trades.clear();
+
+    // Client 1 buys 10 at 100: its own resting sell (front) is cancelled,
+    // then it trades against client 2's sell.
+    auto resp =
+        engine.submit(NewOrder{owned_limit(3, Side::Buy, 100, 10, /*owner=*/1)});
+
+    EXPECT_EQ(resp.status, EngineResult::Accepted);
+    // Cancelled own order 1.
+    ASSERT_EQ(sink.cancelled.size(), 1u);
+    EXPECT_EQ(sink.cancelled[0].id, OrderId{1});
+    // Traded against order 2.
+    ASSERT_EQ(resp.trades.size(), 1u);
+    EXPECT_EQ(resp.trades[0].sell_order_id, OrderId{2});
+    EXPECT_EQ(resp.trades[0].quantity, Quantity{10});
+    // Book empty: order 1 cancelled, order 2 filled, buy fully filled.
+    EXPECT_EQ(engine.book().order_count(), 0u);
+}
+
+// --- STP disabled (default engine): self-cross trades normally ---
+
+TEST_F(MatchingEngineTest, StpDisabledSelfCrossTradesNormally) {
+    // Default `engine` fixture has STP disabled.
+    engine.submit(NewOrder{owned_limit(1, Side::Sell, 100, 10, /*owner=*/1)});
+    auto resp =
+        engine.submit(NewOrder{owned_limit(2, Side::Buy, 100, 10, /*owner=*/1)});
+
+    // No STP: the self-cross trades.
+    EXPECT_EQ(resp.status, EngineResult::Accepted);
+    ASSERT_EQ(resp.trades.size(), 1u);
+    EXPECT_EQ(resp.trades[0].quantity, Quantity{10});
+}
+
 }  // namespace
 }  // namespace miniexchange

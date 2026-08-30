@@ -131,6 +131,42 @@ build libengine.a: CXX_STATIC_LIBRARY_LINKER__engine_RelWithDebInfo CMakeFiles/e
   TARGET_SUPPORT_DIR = CMakeFiles\engine.dir
 
 # =============================================================================
+# Object build statements for STATIC_LIBRARY target risk
+
+
+#############################################
+# Order-only phony target for risk
+
+build cmake_object_order_depends_target_risk: phony || cmake_object_order_depends_target_orderbook
+
+build CMakeFiles/risk.dir/risk/risk_engine.cpp.obj: CXX_COMPILER__risk_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/risk/risk_engine.cpp || cmake_object_order_depends_target_risk
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\risk.dir\risk\risk_engine.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange
+  OBJECT_DIR = CMakeFiles\risk.dir
+  OBJECT_FILE_DIR = CMakeFiles\risk.dir\risk
+  TARGET_SUPPORT_DIR = CMakeFiles\risk.dir
+
+
+# =============================================================================
+# Link build statements for STATIC_LIBRARY target risk
+
+
+#############################################
+# Link the static library librisk.a
+
+build librisk.a: CXX_STATIC_LIBRARY_LINKER__risk_RelWithDebInfo CMakeFiles/risk.dir/risk/risk_engine.cpp.obj || liborderbook.a
+  CONFIG = RelWithDebInfo
+  LANGUAGE_COMPILE_FLAGS = -O2 -g -DNDEBUG
+  OBJECT_DIR = CMakeFiles\risk.dir
+  POST_BUILD = cd .
+  PRE_LINK = cd .
+  TARGET_FILE = librisk.a
+  TARGET_PDB = risk.a.dbg
+  TARGET_SUPPORT_DIR = CMakeFiles\risk.dir
+
+# =============================================================================
 # Object build statements for EXECUTABLE target core_types_test
 
 
@@ -597,6 +633,269 @@ build pool_exhaustion_test.exe pool_exhaustion_test_e3b0c442_tests.cmake | ${cma
   TARGET_IMPLIB = libpool_exhaustion_test.dll.a
   TARGET_PDB = pool_exhaustion_test.exe.dbg
   TARGET_SUPPORT_DIR = CMakeFiles\pool_exhaustion_test.dir
+
+# =============================================================================
+# Object build statements for EXECUTABLE target risk_engine_test
+
+
+#############################################
+# Order-only phony target for risk_engine_test
+
+build cmake_object_order_depends_target_risk_engine_test: phony || cmake_object_order_depends_target_engine cmake_object_order_depends_target_gtest cmake_object_order_depends_target_gtest_main cmake_object_order_depends_target_orderbook cmake_object_order_depends_target_risk
+
+build CMakeFiles/risk_engine_test.dir/tests/risk_engine_test.cpp.obj: CXX_COMPILER__risk_engine_test_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/tests/risk_engine_test.cpp || cmake_object_order_depends_target_risk_engine_test
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\risk_engine_test.dir\tests\risk_engine_test.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest/include -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest
+  OBJECT_DIR = CMakeFiles\risk_engine_test.dir
+  OBJECT_FILE_DIR = CMakeFiles\risk_engine_test.dir\tests
+  TARGET_SUPPORT_DIR = CMakeFiles\risk_engine_test.dir
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target risk_engine_test
+
+
+#############################################
+# Link the executable risk_engine_test.exe
+
+build risk_engine_test.exe risk_engine_test_e3b0c442_tests.cmake | ${cmake_ninja_workdir}risk_engine_test_e3b0c442_tests.cmake: CXX_EXECUTABLE_LINKER__risk_engine_test_RelWithDebInfo CMakeFiles/risk_engine_test.dir/tests/risk_engine_test.cpp.obj | lib/libgtest_main.a librisk.a libengine.a lib/libgtest.a liborderbook.a || lib/libgtest.a lib/libgtest_main.a libengine.a liborderbook.a librisk.a
+  CONFIG = RelWithDebInfo
+  FLAGS = -O2 -g -DNDEBUG
+  LINK_LIBRARIES = lib/libgtest_main.a  librisk.a  libengine.a  lib/libgtest.a  liborderbook.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
+  OBJECT_DIR = CMakeFiles\risk_engine_test.dir
+  POST_BUILD = C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\harsh\Desktop\MiniExchange\build_check && "C:\Program Files\CMake\bin\cmake.exe" -P C:/Users/harsh/Desktop/MiniExchange/build_check/risk_engine_test_e3b0c442_discovery.cmake -- "
+  PRE_LINK = cd .
+  RESTAT = 1
+  TARGET_FILE = risk_engine_test.exe
+  TARGET_IMPLIB = librisk_engine_test.dll.a
+  TARGET_PDB = risk_engine_test.exe.dbg
+  TARGET_SUPPORT_DIR = CMakeFiles\risk_engine_test.dir
+
+# =============================================================================
+# Object build statements for STATIC_LIBRARY target adapters_fix
+
+
+#############################################
+# Order-only phony target for adapters_fix
+
+build cmake_object_order_depends_target_adapters_fix: phony || cmake_object_order_depends_target_orderbook
+
+build CMakeFiles/adapters_fix.dir/adapters/fix/FixMessage.cpp.obj: CXX_COMPILER__adapters_fix_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/adapters/fix/FixMessage.cpp || cmake_object_order_depends_target_adapters_fix
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\adapters_fix.dir\adapters\fix\FixMessage.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange
+  OBJECT_DIR = CMakeFiles\adapters_fix.dir
+  OBJECT_FILE_DIR = CMakeFiles\adapters_fix.dir\adapters\fix
+  TARGET_SUPPORT_DIR = CMakeFiles\adapters_fix.dir
+
+build CMakeFiles/adapters_fix.dir/adapters/fix/FixParser.cpp.obj: CXX_COMPILER__adapters_fix_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/adapters/fix/FixParser.cpp || cmake_object_order_depends_target_adapters_fix
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\adapters_fix.dir\adapters\fix\FixParser.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange
+  OBJECT_DIR = CMakeFiles\adapters_fix.dir
+  OBJECT_FILE_DIR = CMakeFiles\adapters_fix.dir\adapters\fix
+  TARGET_SUPPORT_DIR = CMakeFiles\adapters_fix.dir
+
+build CMakeFiles/adapters_fix.dir/adapters/fix/FixEncoder.cpp.obj: CXX_COMPILER__adapters_fix_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/adapters/fix/FixEncoder.cpp || cmake_object_order_depends_target_adapters_fix
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\adapters_fix.dir\adapters\fix\FixEncoder.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange
+  OBJECT_DIR = CMakeFiles\adapters_fix.dir
+  OBJECT_FILE_DIR = CMakeFiles\adapters_fix.dir\adapters\fix
+  TARGET_SUPPORT_DIR = CMakeFiles\adapters_fix.dir
+
+build CMakeFiles/adapters_fix.dir/adapters/fix/FixSession.cpp.obj: CXX_COMPILER__adapters_fix_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/adapters/fix/FixSession.cpp || cmake_object_order_depends_target_adapters_fix
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\adapters_fix.dir\adapters\fix\FixSession.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange
+  OBJECT_DIR = CMakeFiles\adapters_fix.dir
+  OBJECT_FILE_DIR = CMakeFiles\adapters_fix.dir\adapters\fix
+  TARGET_SUPPORT_DIR = CMakeFiles\adapters_fix.dir
+
+
+# =============================================================================
+# Link build statements for STATIC_LIBRARY target adapters_fix
+
+
+#############################################
+# Link the static library libadapters_fix.a
+
+build libadapters_fix.a: CXX_STATIC_LIBRARY_LINKER__adapters_fix_RelWithDebInfo CMakeFiles/adapters_fix.dir/adapters/fix/FixMessage.cpp.obj CMakeFiles/adapters_fix.dir/adapters/fix/FixParser.cpp.obj CMakeFiles/adapters_fix.dir/adapters/fix/FixEncoder.cpp.obj CMakeFiles/adapters_fix.dir/adapters/fix/FixSession.cpp.obj || liborderbook.a
+  CONFIG = RelWithDebInfo
+  LANGUAGE_COMPILE_FLAGS = -O2 -g -DNDEBUG
+  OBJECT_DIR = CMakeFiles\adapters_fix.dir
+  POST_BUILD = cd .
+  PRE_LINK = cd .
+  TARGET_FILE = libadapters_fix.a
+  TARGET_PDB = adapters_fix.a.dbg
+  TARGET_SUPPORT_DIR = CMakeFiles\adapters_fix.dir
+
+# =============================================================================
+# Object build statements for EXECUTABLE target fix_adapter_test
+
+
+#############################################
+# Order-only phony target for fix_adapter_test
+
+build cmake_object_order_depends_target_fix_adapter_test: phony || cmake_object_order_depends_target_adapters_fix cmake_object_order_depends_target_engine cmake_object_order_depends_target_gtest cmake_object_order_depends_target_gtest_main cmake_object_order_depends_target_orderbook
+
+build CMakeFiles/fix_adapter_test.dir/tests/fix_adapter_test.cpp.obj: CXX_COMPILER__fix_adapter_test_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/tests/fix_adapter_test.cpp || cmake_object_order_depends_target_fix_adapter_test
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\fix_adapter_test.dir\tests\fix_adapter_test.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest/include -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest
+  OBJECT_DIR = CMakeFiles\fix_adapter_test.dir
+  OBJECT_FILE_DIR = CMakeFiles\fix_adapter_test.dir\tests
+  TARGET_SUPPORT_DIR = CMakeFiles\fix_adapter_test.dir
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target fix_adapter_test
+
+
+#############################################
+# Link the executable fix_adapter_test.exe
+
+build fix_adapter_test.exe fix_adapter_test_e3b0c442_tests.cmake | ${cmake_ninja_workdir}fix_adapter_test_e3b0c442_tests.cmake: CXX_EXECUTABLE_LINKER__fix_adapter_test_RelWithDebInfo CMakeFiles/fix_adapter_test.dir/tests/fix_adapter_test.cpp.obj | lib/libgtest_main.a libadapters_fix.a libengine.a lib/libgtest.a liborderbook.a || lib/libgtest.a lib/libgtest_main.a libadapters_fix.a libengine.a liborderbook.a
+  CONFIG = RelWithDebInfo
+  FLAGS = -O2 -g -DNDEBUG
+  LINK_LIBRARIES = lib/libgtest_main.a  libadapters_fix.a  libengine.a  lib/libgtest.a  liborderbook.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
+  OBJECT_DIR = CMakeFiles\fix_adapter_test.dir
+  POST_BUILD = C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\harsh\Desktop\MiniExchange\build_check && "C:\Program Files\CMake\bin\cmake.exe" -P C:/Users/harsh/Desktop/MiniExchange/build_check/fix_adapter_test_e3b0c442_discovery.cmake -- "
+  PRE_LINK = cd .
+  RESTAT = 1
+  TARGET_FILE = fix_adapter_test.exe
+  TARGET_IMPLIB = libfix_adapter_test.dll.a
+  TARGET_PDB = fix_adapter_test.exe.dbg
+  TARGET_SUPPORT_DIR = CMakeFiles\fix_adapter_test.dir
+
+# =============================================================================
+# Object build statements for STATIC_LIBRARY target strategy
+
+
+#############################################
+# Order-only phony target for strategy
+
+build cmake_object_order_depends_target_strategy: phony || cmake_object_order_depends_target_orderbook
+
+build CMakeFiles/strategy.dir/strategy/MarketMakerStrategy.cpp.obj: CXX_COMPILER__strategy_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/strategy/MarketMakerStrategy.cpp || cmake_object_order_depends_target_strategy
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\strategy.dir\strategy\MarketMakerStrategy.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange
+  OBJECT_DIR = CMakeFiles\strategy.dir
+  OBJECT_FILE_DIR = CMakeFiles\strategy.dir\strategy
+  TARGET_SUPPORT_DIR = CMakeFiles\strategy.dir
+
+build CMakeFiles/strategy.dir/strategy/MomentumStrategy.cpp.obj: CXX_COMPILER__strategy_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/strategy/MomentumStrategy.cpp || cmake_object_order_depends_target_strategy
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\strategy.dir\strategy\MomentumStrategy.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange
+  OBJECT_DIR = CMakeFiles\strategy.dir
+  OBJECT_FILE_DIR = CMakeFiles\strategy.dir\strategy
+  TARGET_SUPPORT_DIR = CMakeFiles\strategy.dir
+
+
+# =============================================================================
+# Link build statements for STATIC_LIBRARY target strategy
+
+
+#############################################
+# Link the static library libstrategy.a
+
+build libstrategy.a: CXX_STATIC_LIBRARY_LINKER__strategy_RelWithDebInfo CMakeFiles/strategy.dir/strategy/MarketMakerStrategy.cpp.obj CMakeFiles/strategy.dir/strategy/MomentumStrategy.cpp.obj || liborderbook.a
+  CONFIG = RelWithDebInfo
+  LANGUAGE_COMPILE_FLAGS = -O2 -g -DNDEBUG
+  OBJECT_DIR = CMakeFiles\strategy.dir
+  POST_BUILD = cd .
+  PRE_LINK = cd .
+  TARGET_FILE = libstrategy.a
+  TARGET_PDB = strategy.a.dbg
+  TARGET_SUPPORT_DIR = CMakeFiles\strategy.dir
+
+# =============================================================================
+# Object build statements for EXECUTABLE target strategy_test
+
+
+#############################################
+# Order-only phony target for strategy_test
+
+build cmake_object_order_depends_target_strategy_test: phony || cmake_object_order_depends_target_engine cmake_object_order_depends_target_gtest cmake_object_order_depends_target_gtest_main cmake_object_order_depends_target_orderbook cmake_object_order_depends_target_risk cmake_object_order_depends_target_strategy
+
+build CMakeFiles/strategy_test.dir/tests/strategy_test.cpp.obj: CXX_COMPILER__strategy_test_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/tests/strategy_test.cpp || cmake_object_order_depends_target_strategy_test
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\strategy_test.dir\tests\strategy_test.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest/include -isystem C:/Users/harsh/Desktop/MiniExchange/build_check/_deps/googletest-src/googletest
+  OBJECT_DIR = CMakeFiles\strategy_test.dir
+  OBJECT_FILE_DIR = CMakeFiles\strategy_test.dir\tests
+  TARGET_SUPPORT_DIR = CMakeFiles\strategy_test.dir
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target strategy_test
+
+
+#############################################
+# Link the executable strategy_test.exe
+
+build strategy_test.exe strategy_test_e3b0c442_tests.cmake | ${cmake_ninja_workdir}strategy_test_e3b0c442_tests.cmake: CXX_EXECUTABLE_LINKER__strategy_test_RelWithDebInfo CMakeFiles/strategy_test.dir/tests/strategy_test.cpp.obj | lib/libgtest_main.a libstrategy.a librisk.a libengine.a lib/libgtest.a liborderbook.a || lib/libgtest.a lib/libgtest_main.a libengine.a liborderbook.a librisk.a libstrategy.a
+  CONFIG = RelWithDebInfo
+  FLAGS = -O2 -g -DNDEBUG
+  LINK_LIBRARIES = lib/libgtest_main.a  libstrategy.a  librisk.a  libengine.a  lib/libgtest.a  liborderbook.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
+  OBJECT_DIR = CMakeFiles\strategy_test.dir
+  POST_BUILD = C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\harsh\Desktop\MiniExchange\build_check && "C:\Program Files\CMake\bin\cmake.exe" -P C:/Users/harsh/Desktop/MiniExchange/build_check/strategy_test_e3b0c442_discovery.cmake -- "
+  PRE_LINK = cd .
+  RESTAT = 1
+  TARGET_FILE = strategy_test.exe
+  TARGET_IMPLIB = libstrategy_test.dll.a
+  TARGET_PDB = strategy_test.exe.dbg
+  TARGET_SUPPORT_DIR = CMakeFiles\strategy_test.dir
+
+# =============================================================================
+# Object build statements for EXECUTABLE target strategy_runner
+
+
+#############################################
+# Order-only phony target for strategy_runner
+
+build cmake_object_order_depends_target_strategy_runner: phony || cmake_object_order_depends_target_engine cmake_object_order_depends_target_orderbook cmake_object_order_depends_target_risk cmake_object_order_depends_target_strategy
+
+build CMakeFiles/strategy_runner.dir/apps/strategy_runner/main.cpp.obj: CXX_COMPILER__strategy_runner_unscanned_RelWithDebInfo C$:/Users/harsh/Desktop/MiniExchange/apps/strategy_runner/main.cpp || cmake_object_order_depends_target_strategy_runner
+  CONFIG = RelWithDebInfo
+  DEP_FILE = CMakeFiles\strategy_runner.dir\apps\strategy_runner\main.cpp.obj.d
+  FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/Users/harsh/Desktop/MiniExchange
+  OBJECT_DIR = CMakeFiles\strategy_runner.dir
+  OBJECT_FILE_DIR = CMakeFiles\strategy_runner.dir\apps\strategy_runner
+  TARGET_SUPPORT_DIR = CMakeFiles\strategy_runner.dir
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target strategy_runner
+
+
+#############################################
+# Link the executable strategy_runner.exe
+
+build strategy_runner.exe: CXX_EXECUTABLE_LINKER__strategy_runner_RelWithDebInfo CMakeFiles/strategy_runner.dir/apps/strategy_runner/main.cpp.obj | libstrategy.a librisk.a libengine.a liborderbook.a || libengine.a liborderbook.a librisk.a libstrategy.a
+  CONFIG = RelWithDebInfo
+  FLAGS = -O2 -g -DNDEBUG
+  LINK_LIBRARIES = libstrategy.a  librisk.a  libengine.a  liborderbook.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
+  OBJECT_DIR = CMakeFiles\strategy_runner.dir
+  POST_BUILD = cd .
+  PRE_LINK = cd .
+  TARGET_FILE = strategy_runner.exe
+  TARGET_IMPLIB = libstrategy_runner.dll.a
+  TARGET_PDB = strategy_runner.exe.dbg
+  TARGET_SUPPORT_DIR = CMakeFiles\strategy_runner.dir
 
 # =============================================================================
 # Object build statements for STATIC_LIBRARY target text_protocol
@@ -2408,6 +2707,8 @@ build _deps/nlohmann_json-build/install/strip: phony _deps/nlohmann_json-build/C
 # =============================================================================
 # Target aliases.
 
+build adapters_fix: phony libadapters_fix.a
+
 build adapters_udp: phony libadapters_udp.a
 
 build benchmark: phony _deps/benchmark-build/src/libbenchmark.a
@@ -2427,6 +2728,8 @@ build engine: phony libengine.a
 build engine_command_test: phony engine_command_test.exe
 
 build events_test: phony events_test.exe
+
+build fix_adapter_test: phony fix_adapter_test.exe
 
 build gmock: phony lib/libgmock.a
 
@@ -2478,9 +2781,19 @@ build r8_spin_test: phony r8_spin_test.exe
 
 build response_routing_test: phony response_routing_test.exe
 
+build risk: phony librisk.a
+
+build risk_engine_test: phony risk_engine_test.exe
+
 build spsc_ring_buffer_test: phony spsc_ring_buffer_test.exe
 
 build spsc_stress_test: phony spsc_stress_test.exe
+
+build strategy: phony libstrategy.a
+
+build strategy_runner: phony strategy_runner.exe
+
+build strategy_test: phony strategy_test.exe
 
 build text_protocol: phony libtext_protocol.a
 
@@ -2506,7 +2819,7 @@ build workload_generator_test: phony workload_generator_test.exe
 #############################################
 # Folder: C:/Users/harsh/Desktop/MiniExchange/build_check
 
-build all: phony liborderbook.a libengine.a core_types_test.exe core_trade_test.exe order_types_test.exe events_test.exe interfaces_test.exe price_level_test.exe order_book_test.exe order_pool_test.exe matching_engine_test.exe integration_test.exe edge_case_test.exe pool_exhaustion_test.exe libtext_protocol.a libadapters_udp.a udp_feed_message_test.exe udp_publisher_test.exe udp_publisher_e2e_test.exe udp_book_builder_test.exe udp_e2e_dod_test.exe libworkload_generator.a workload_generator_test.exe mini_exchange.exe latency_recorder_test.exe engine_command_test.exe spsc_ring_buffer_test.exe spsc_stress_test.exe inbound_queue_test.exe response_routing_test.exe r8_spin_test.exe benchmark_harness.exe queue_benchmark.exe _deps/googletest-build/all _deps/benchmark-build/all _deps/nlohmann_json-build/all
+build all: phony liborderbook.a libengine.a librisk.a core_types_test.exe core_trade_test.exe order_types_test.exe events_test.exe interfaces_test.exe price_level_test.exe order_book_test.exe order_pool_test.exe matching_engine_test.exe integration_test.exe edge_case_test.exe pool_exhaustion_test.exe risk_engine_test.exe libadapters_fix.a fix_adapter_test.exe libstrategy.a strategy_test.exe strategy_runner.exe libtext_protocol.a libadapters_udp.a udp_feed_message_test.exe udp_publisher_test.exe udp_publisher_e2e_test.exe udp_book_builder_test.exe udp_e2e_dod_test.exe libworkload_generator.a workload_generator_test.exe mini_exchange.exe latency_recorder_test.exe engine_command_test.exe spsc_ring_buffer_test.exe spsc_stress_test.exe inbound_queue_test.exe response_routing_test.exe r8_spin_test.exe benchmark_harness.exe queue_benchmark.exe _deps/googletest-build/all _deps/benchmark-build/all _deps/nlohmann_json-build/all
 
 # =============================================================================
 

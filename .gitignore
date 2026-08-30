@@ -1,6 +1,9 @@
 # Build artifacts
 build/
+build[0-9]*/
+build_*/
 cmake-build-*/
+out/
 
 # IDE artifacts
 .vscode/
@@ -56,7 +59,5 @@ perf.data.old
 /*.log
 /*.txt
 !/CMakeLists.txt
-/buildmpowershell/
 /run_bench.bat
 /run_bench.ps1
-/test_output.txtmctest
