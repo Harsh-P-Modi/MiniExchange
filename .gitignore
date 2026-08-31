@@ -2,8 +2,12 @@
 build/
 build[0-9]*/
 build_*/
+build-*/
 cmake-build-*/
 out/
+
+# CI benchmark output (see .github/workflows/ci.yml's benchmarks job)
+bench-output/
 
 # IDE artifacts
 .vscode/
@@ -12,6 +16,11 @@ out/
 *.swo
 *~
 .DS_Store
+
+# Kiro IDE internal execution-tracking state (chat session IDs,
+# timestamps) — not spec content; accidentally tracked once in
+# specs/phase-05-tcp-gateway/, cleaned up, don't repeat it.
+tasks.meta.json
 
 # Compiled Object files
 *.o

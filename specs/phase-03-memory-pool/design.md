@@ -1,6 +1,7 @@
 # Phase 3 — Design: Memory Pool
 
-Status: **DRAFT — awaiting your approval before tasks.md is written**
+Status: **APPROVED** — `tasks.md` is written from this version and the
+phase is implemented and test-verified.
 
 ## 1. Overview
 

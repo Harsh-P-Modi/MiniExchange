@@ -1,6 +1,7 @@
 # Phase 7 — Design: Binary Wire Protocol
 
-Status: **DRAFT — pending approval**
+Status: **APPROVED** — `tasks.md` is written from this version and the
+phase is implemented and test-verified.
 
 ## 0. Resolved Open Questions (from requirements.md)
 

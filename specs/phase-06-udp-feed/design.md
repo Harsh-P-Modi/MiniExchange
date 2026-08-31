@@ -1,6 +1,7 @@
 # Phase 6 — Design: UDP Market Data Feed
 
-Status: **REVISED (v3) — post second spec-review, pending re-approval**
+Status: **APPROVED (v3)** — `tasks.md` is written from this version
+and the phase is implemented and test-verified.
 
 Revision note: supersedes the v2 draft. This pass resolves: best-price
 draining on cancel/trade (§1b, new), `SymbolId` strong-typing (§2),

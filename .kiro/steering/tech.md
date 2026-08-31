@@ -8,7 +8,7 @@
 | OS | Linux only, Ubuntu 24.04 LTS. No Windows/macOS support, ever. |
 | Build | CMake + Ninja |
 | Testing | GoogleTest (correctness), Google Benchmark (perf). libFuzzer added once the order book is stable. |
-| CI | GitHub Actions from day 1: build, run tests, run benchmarks (optional/non-blocking), clang-tidy, cppcheck |
+| CI | GitHub Actions from day 1: build, run tests (blocking); clang-tidy, cppcheck, ASan/UBSan, TSan, and benchmarks all run every push but are non-blocking (`continue-on-error`) until proven consistently clean/stable |
 | Debug/profiling tools | perf, perf record, taskset, numactl, hugepages, valgrind, gdb |
 
 ## Hard rules (apply to every phase unless a spec explicitly overrides)

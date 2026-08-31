@@ -1,6 +1,8 @@
 # Phase 1 — Tasks: Limit Order Book + Matching Engine
 
-Status: **APPROVED PLAN — execute one task at a time**
+Status: **COMPLETE** — all 17 tasks implemented and test-verified; see
+`README.md`'s phase status table and `docs/LEARNING.md`'s Phase 1
+section (one sub-section per task) for verification detail.
 
 **Execution rule (per `.kiro/steering/structure.md`): do exactly one
 task below, then stop and wait for explicit review/approval before

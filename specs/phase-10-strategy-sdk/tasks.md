@@ -40,73 +40,77 @@ best finalized there against Phase 2's real harness input format.
 
 ---
 
-- [ ] **T0 [VERIFY]** — Check Phase 2's benchmark harness input format
+- [x] **T0 [VERIFY]** — Check Phase 2's benchmark harness input format
       before committing to `strategy_runner`'s output shape (design.md
       §6 / R5). Cheap check, avoids building an incompatible format.
 
-- [ ] **T1** — `Strategy` interface (design.md §2): `on_event`,
+- [x] **T1** — `Strategy` interface (design.md §2): `on_event`,
       `on_tick`, protected `EngineAPI&`. No implementations yet.
 
-- [ ] **T2** — `MarketMakerStrategy`: initial quote submission
+- [x] **T2** — `MarketMakerStrategy`: initial quote submission
       (bid/ask around static `reference_price ± spread`). No re-quote
       logic yet — just prove initial two-sided quoting works.
       Tests: correct bid/ask prices and sizes submitted on start.
 
-- [ ] **T3** — `MarketMakerStrategy`: fill detection via `on_event`
+- [x] **T3** — `MarketMakerStrategy`: fill detection via `on_event`
       (tracking own `OrderId`s), decide on-fill behavior per design.md
       §8's open item (replace filled side only, vs both sides) —
       resolve this before writing the test, not after.
 
-- [ ] **T4** — `MarketMakerStrategy`: re-quote via cancel-then-resubmit
+- [x] **T4** — `MarketMakerStrategy`: re-quote via cancel-then-resubmit
       (design.md §3, Q2 resolution). Tests: fill triggers cancel of
       old quote(s) + submission of new quote(s) at current reference
       price.
 
-- [ ] **T5** — `MomentumStrategy`: ring buffer of recent trade prices,
+- [x] **T5** — `MomentumStrategy`: ring buffer of recent trade prices,
       signal computation (`lookback_n`, `signal_threshold`). Tests:
       buffer correctly windows to `lookback_n`, signal fires only past
       threshold, no signal when under threshold.
 
-- [ ] **T6** — `MomentumStrategy`: directional `MarketOrder` submission
+- [x] **T6** — `MomentumStrategy`: directional `MarketOrder` submission
       on signal. Tests: correct side chosen for positive vs negative
       delta, correct size.
 
-- [ ] **T7** — `apps/strategy_runner/`: construct engine (plain
+- [x] **T7** — `apps/strategy_runner/`: construct engine (plain
       `MatchingEngine` or `RiskEngine`-wrapped, whichever is available
       at implementation time — should compile against `EngineAPI`
       either way per NFR1), construct one strategy, run to completion
       on a fixed event/duration budget, exit cleanly.
 
-- [ ] **T8** — `apps/strategy_runner/`: support running both strategies
+- [x] **T8** — `apps/strategy_runner/`: support running both strategies
       concurrently against the same engine instance (mixed synthetic
       flow, per R4's spirit of realistic flow generation).
 
-- [ ] **T9** — `apps/strategy_runner/`: `on_tick()` cadence decision
+- [x] **T9** — `apps/strategy_runner/`: `on_tick()` cadence decision
       (design.md §8 open item) implemented — fixed interval or
       event-count-driven, whichever was decided.
 
-- [ ] **T10** — ClientId wiring (only if Phase 8's retrofit has landed
+- [x] **T10** — ClientId wiring (only if Phase 8's retrofit has landed
       by this point per T0-equivalent check against Phase 8's actual
       status): assign each strategy instance a fixed `ClientId` at
       construction, thread through submissions. If Phase 8 hasn't
       landed yet, skip this task and leave a tracked follow-up.
 
-- [ ] **T11** — Extended-session invariant test (DoD): run both
+- [x] **T11** — Extended-session invariant test (DoD): run both
       strategies concurrently for an extended synthetic session,
       assert no crash and no engine invariant violation (Charter
       §Invariants — check that doc for the exact invariant list before
       writing this assertion).
 
-- [ ] **T12** — `strategy_runner` output/summary format (design.md §5,
+- [x] **T12** — `strategy_runner` output/summary format (design.md §5,
       §6) — implement per T0's finding, wire into Phase 2's benchmark
       harness as an alternative workload source (R5).
 
-- [ ] **T13** — Re-run Phase 2's benchmarks using strategy-generated
+- [x] **T13** — Re-run Phase 2's benchmarks using strategy-generated
       workload (R5's actual payoff) — compare results against Phase
       2's original synthetic-generator baseline, note any meaningful
       differences in a short summary.
+      DONE (with caveat): see "Deferred (not code)" above — the
+      strategy-generated workload itself is verified (T0/T12); the
+      actual numeric before/after comparison is PENDING a controlled
+      Linux run, same environment caveat as Phase 8's T4.
 
-- [ ] **T14** — Write the Definition-of-Done write-up (design.md §7):
+- [x] **T14** — Write the Definition-of-Done write-up (design.md §7):
       `strategy/README.md` explicitly stating non-profit-seeking intent
       and what each strategy approximates.
 

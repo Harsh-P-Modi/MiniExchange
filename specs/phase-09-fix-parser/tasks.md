@@ -29,28 +29,28 @@ dependent implementation task.
 
 ---
 
-- [ ] **T0 [VERIFY]** — Confirm FIX 4.2 vs 4.4 targeting (design.md's
+- [x] **T0 [VERIFY]** — Confirm FIX 4.2 vs 4.4 targeting (design.md's
       Q2 assumption). No code; just settles the header tag list before
       T5 below is implemented against a specific version's semantics.
 
-- [ ] **T1 [VERIFY]** — Confirm sequencing relative to Phase 8: has the
+- [x] **T1 [VERIFY]** — Confirm sequencing relative to Phase 8: has the
       ClientId retrofit (Phase 8, T2–T4) landed yet? Determines whether
       T8 below builds the real `SenderCompID → ClientId` mapping or a
       stub.
 
-- [ ] **T2** — `FixError` / `FixErrorReason` type (design.md §5). No
+- [x] **T2** — `FixError` / `FixErrorReason` type (design.md §5). No
       dependencies; needed by every later task.
 
-- [ ] **T3** — `FixMessage`: SOH tokenizer + tag map builder. Unit
+- [x] **T3** — `FixMessage`: SOH tokenizer + tag map builder. Unit
       tests: valid message tokenizes correctly, missing final SOH
       handled, empty message handled.
 
-- [ ] **T4** — `FixMessage`: checksum (tag `10`) and BodyLength (tag
+- [x] **T4** — `FixMessage`: checksum (tag `10`) and BodyLength (tag
       `9`) validation, run before business-tag parsing. Unit tests:
       correct checksum passes, corrupted checksum → `ChecksumMismatch`,
       corrupted bodylength → `BodyLengthMismatch`.
 
-- [ ] **T5** — `FixParser`: `35=D` (NewOrderSingle) mapping per
+- [x] **T5** — `FixParser`: `35=D` (NewOrderSingle) mapping per
       design.md §3 — all of tags `11`/`55`/`54`/`40`/`44`/`38`, both
       Limit and Market `OrdType` branches. One test per error reason
       this path can produce (`InvalidClOrdIdFormat`,
@@ -58,52 +58,52 @@ dependent implementation task.
       `MissingPrice`, `InvalidQuantity`), plus valid-Limit and
       valid-Market happy-path tests.
 
-- [ ] **T6** — `FixParser`: `35=F` (OrderCancelRequest) mapping per
+- [x] **T6** — `FixParser`: `35=F` (OrderCancelRequest) mapping per
       design.md §3 / Q3 resolution — `41` preferred, `11` fallback.
       Tests: `41` present (used), `41` absent/`11` present (fallback
       used), both absent (`MissingRequiredTag`).
 
-- [ ] **T7** — `FixParser`: reject-cleanly path for any other `35`
+- [x] **T7** — `FixParser`: reject-cleanly path for any other `35`
       value (`UnsupportedMessageType`) — satisfies R1's "not silently
       ignored" requirement explicitly, with its own test.
 
-- [ ] **T8** — Session identity mapping: `SenderCompID` (tag `49`) →
+- [x] **T8** — Session identity mapping: `SenderCompID` (tag `49`) →
       `ClientId`, gated on T1's finding. If Phase 8 has landed, wire
       the real mapping and populate `owner` on parsed `NewOrder`s; if
       not, stub with a fixed default `ClientId` and leave a clear
       `// TODO(Phase 8 retrofit)` marker plus a tracked follow-up task
       for whichever phase lands second.
 
-- [ ] **T9** — `FixEncoder`: header construction (tags
+- [x] **T9** — `FixEncoder`: header construction (tags
       `8`/`9`/`35`/`49`/`56`/`34`/`52`) with correct BodyLength
       computed before CheckSum, per design.md §4. Confirm
       `49`/`56` placeholder source (design.md's carried-open-item) —
       config constants unless T0/design review says otherwise.
 
-- [ ] **T10** — `FixEncoder`: business tags for `35=8`
+- [x] **T10** — `FixEncoder`: business tags for `35=8`
       (`37`/`11`/`17`/`39`/`150`, plus `55`/`54` echo) mapping from
       `EngineResponse`/`Trade` per design.md §4's `OrdStatus`/`ExecType`
       table. One test per status: New, PartiallyFilled, Filled,
       Cancelled, Rejected.
 
-- [ ] **T11** — `FixEncoder`: CheckSum computation, tested
+- [x] **T11** — `FixEncoder`: CheckSum computation, tested
       independently (test computes the expected checksum itself rather
       than reusing the encoder's routine) per design.md §7's note —
       this is the test that actually catches a checksum bug rather
       than just confirming self-consistency.
 
-- [ ] **T12** — Round-trip test (DoD): construct `NewOrder` →
+- [x] **T12** — Round-trip test (DoD): construct `NewOrder` →
       build/parse `35=D` fixture → confirm resulting `NewOrder` matches
       the original, for both Limit and Market variants.
 
-- [ ] **T13** — Wire the parser/encoder into the actual `EngineAPI`
+- [x] **T13** — Wire the parser/encoder into the actual `EngineAPI`
       entry point (design.md §6) — parsed orders go to
       `EngineAPI::submit`/`cancel`, `EngineResponse` results go to
       `FixEncoder`. Written against `EngineAPI`, not `MatchingEngine`
       directly, so it composes with Phase 8 regardless of landing
       order.
 
-- [ ] **T14** — Integration test: full parse → submit → response →
+- [x] **T14** — Integration test: full parse → submit → response →
       encode loop using fixture `EngineResponse`/`Trade` data, per DoD's
       "ExecutionReport correctly reflects fills/rejects" requirement.
 

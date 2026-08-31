@@ -69,3 +69,115 @@ jobs:
             -I lockfree_queue/ -I tools/ -I adapters/ \
             core/ orderbook/ engine/ interfaces/ apps/ tests/ \
             lockfree_queue/ tools/ adapters/ 2>&1 || true
+
+  asan-ubsan:
+    # CHARTER.md's Definition of Done requires "No memory leaks
+    # (ASan/valgrind clean)" for every phase; nothing enforced that
+    # automatically before this job. Non-blocking for now (like
+    # clang-tidy/cppcheck) until a first clean run confirms the whole
+    # suite is sanitizer-clean — see this run's outcome before flipping
+    # continue-on-error off.
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure (ASan + UBSan)
+        run: |
+          cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all"
+
+      - name: Build
+        run: cmake --build build-asan
+
+      - name: Run tests under ASan/UBSan
+        run: ctest --test-dir build-asan --output-on-failure
+
+  tsan:
+    # The lock-free SpscRingBuffer (Phase 4) is exactly the kind of code
+    # a race-condition bug hides in silently; spsc_stress_test.cpp's own
+    # header comment in CMakeLists.txt says "run under TSan in CI" —
+    # this job is what makes that true instead of aspirational.
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure (TSan)
+        run: |
+          cmake -S . -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+
+      - name: Build the concurrency-sensitive targets
+        run: |
+          cmake --build build-tsan --target spsc_ring_buffer_test \
+            spsc_stress_test inbound_queue_test response_routing_test r8_spin_test
+
+      - name: Run concurrency tests under TSan
+        run: |
+          ctest --test-dir build-tsan --output-on-failure \
+            -R "SpscRingBufferTest|SpscStressTest|InboundQueueTest|OutboundQueueTest|ParseToPushTest|R8SpinTest"
+
+  benchmarks:
+    # Non-blocking, per tech.md's locked CI stack ("run benchmarks
+    # (optional/non-blocking)"). Runs on a shared runner, so numbers here
+    # are indicative, not authoritative — they're uploaded as an artifact
+    # for a human to inspect and fold into benchmarks/results/*.md with an
+    # interpretation (per CHARTER.md's benchmark philosophy), not
+    # auto-committed: an unreviewed number isn't a recorded number.
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+      - name: Build benchmark targets
+        run: |
+          cmake --build build --target benchmark_harness queue_benchmark \
+            tcp_roundtrip_bench protocol_benchmark
+
+      - name: Create output directory
+        run: mkdir -p bench-output
+
+      - name: Run benchmark harness (Phase 2/3 latency + throughput)
+        run: ./build/benchmark_harness | tee bench-output/benchmark_harness.txt
+        continue-on-error: true
+
+      - name: Run queue benchmark (Phase 4)
+        run: ./build/queue_benchmark | tee bench-output/queue_benchmark.txt
+        continue-on-error: true
+
+      - name: Run TCP round-trip benchmark (Phase 5)
+        run: ./build/tcp_roundtrip_bench 0 10000 | tee bench-output/tcp_roundtrip_bench.txt
+        continue-on-error: true
+
+      - name: Run protocol benchmark (Phase 7, binary vs JSON)
+        run: |
+          ./build/protocol_benchmark --benchmark_repetitions=10 \
+            --benchmark_out=bench-output/protocol_benchmark.json \
+            --benchmark_out_format=json | tee bench-output/protocol_benchmark.txt
+        continue-on-error: true
+
+      - name: Upload raw benchmark output
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-output-${{ github.sha }}
+          path: bench-output/
+          retention-days: 30

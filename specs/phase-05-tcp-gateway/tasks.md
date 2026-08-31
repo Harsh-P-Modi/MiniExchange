@@ -1,4 +1,12 @@
-# Implementation Plan
+# Phase 5 — Tasks: TCP Order Gateway
+
+Status: **COMPLETE** — all tasks below implemented and test-verified;
+see `README.md`'s phase status table and `docs/LEARNING.md`'s Phase 5
+section for verification detail. (Task 7's round-trip latency numbers
+in `benchmarks/results/phase-05-tcp-roundtrip.md` are recorded as
+placeholders pending a controlled Linux run — see that file's
+"Environment requirements" section — same caveat as later phases'
+Linux-only benchmarks.)
 
 ## Overview
 

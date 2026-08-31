@@ -1,6 +1,7 @@
 # Phase 8 — Design: Risk Engine
 
-Status: **DRAFT — pending approval before `tasks.md` is executed**
+Status: **APPROVED** — `tasks.md` is written from this version and the
+phase is implemented and test-verified.
 
 Builds on the resolved `requirements.md`: Q1 (ClientId retrofit), Q2
 (STP policy + placement), Q3 (config struct), Q4 (static reference

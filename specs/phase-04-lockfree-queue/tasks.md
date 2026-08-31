@@ -1,6 +1,8 @@
 # Phase 4 — Tasks: Lock-Free Queue
 
-Status: **APPROVED PLAN — execute one task at a time**
+Status: **COMPLETE** — all 6 tasks implemented and test-verified; see
+`README.md`'s phase status table, `benchmarks/results/phase-04-queue-comparison.md`,
+and `docs/LEARNING.md`'s Phase 4 section for verification detail.
 
 **Execution rule (per `.kiro/steering/structure.md`): do exactly one
 task below, then stop and wait for explicit review/approval before

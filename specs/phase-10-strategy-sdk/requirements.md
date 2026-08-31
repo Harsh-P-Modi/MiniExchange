@@ -1,6 +1,10 @@
 # Phase 10 — Requirements: Strategy SDK
 
-Status: **DRAFT — spec-only pass, design.md deferred until this phase starts**
+Status: **APPROVED** — Open Questions resolved below; `design.md` and
+`tasks.md` are built on this version and the phase is implemented and
+test-verified (`strategy_test` = 7 tests / 3 suites passing; the
+`strategy_runner` app runs a 3000-tick session generating ~3993 trades
+with no crash).
 
 ## 1. Scope
 
@@ -50,19 +54,21 @@ success for this phase's actual goal.
 - A short write-up explicitly states these are not profit-seeking and
   explains what "realistic order flow" they're meant to approximate.
 
-## 5. Open Questions (resolve before design.md for this phase)
+## 5. Open Questions — Resolved
 
-1. **In-process vs. over TCP** — running strategies in-process against
-   `MatchingEngine` directly is simplest and sufficient to generate
-   flow; running them as TCP clients (Phase 5) is more realistic
-   (includes real network latency in the loop) but more work. Which do
-   you want as the Phase 10 baseline, with the other as an optional
-   stretch?
-2. **Market maker re-quote mechanics** — cancel-then-resubmit (two
-   engine calls) vs. a hypothetical cancel-replace order type (not
-   currently in scope per Phase 1's explicit deferral of
-   Cancel-Replace) — confirms this phase stays within Phase 1's
-   existing order-type scope rather than quietly reopening it.
-3. Does this phase warrant its own `apps/strategy_runner/`, or does it
-   make more sense folded into `apps/replay/` since both are "drive the
-   engine with synthetic/recorded flow, not a human or network client"?
+1. **In-process vs. over TCP** — **In-process against `EngineAPI`** is
+   the Phase 10 baseline. Running a strategy as a TCP/FIX client
+   remains a valid stretch goal but is not required for this phase's
+   Definition of Done. See design.md §0/§1.
+2. **Market maker re-quote mechanics** — **Cancel-then-resubmit** (two
+   sequential `EngineAPI` calls: `cancel()` the old quote, `submit()`
+   the new one). Deliberately stays within Phase 1's existing
+   order-type scope rather than introducing Cancel-Replace. See
+   design.md §0/§3.
+3. **`apps/strategy_runner/` vs. `apps/replay/`** — **New
+   `apps/strategy_runner/`.** `apps/replay/` plays back deterministic
+   recorded flow with no feedback loop; strategies are stateful and
+   react to live `EngineResponse`/`Trade` events (a fill triggers a
+   re-quote, a trade price updates the momentum signal), which would
+   give `replay` two different control-flow shapes depending on mode.
+   See design.md §0/§5.

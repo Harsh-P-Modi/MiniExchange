@@ -1,10 +1,11 @@
 # Phase 10 — Design: Strategy SDK
 
-Status: **DRAFT — pending your approval before tasks.md is executed**
+Status: **APPROVED** — `tasks.md` is written from this version and the
+phase is implemented and test-verified.
 
-Resolves the three open questions from requirements.md as follows
-(flagging as proposed, not yet confirmed — override before treating
-this as final):
+## 0. Resolved Open Questions (from requirements.md)
+
+Resolves the three open questions from requirements.md as follows:
 
 - **Q1 (in-process vs TCP):** in-process against `EngineAPI` is the
   Phase 10 baseline. Running a strategy as a TCP client (using Phase
@@ -172,21 +173,37 @@ struct MomentumConfig {
   bursts — together giving the engine a more realistic mix than a
   single uniform-random order generator would.
 
-## 8. Open items carried into tasks.md
+## 8. Open items — resolved (or explicitly deferred)
 
-- Confirm whether `MarketMakerStrategy`'s `reference_price` should be
-  static (config-only, like Phase 8 Q4's cold-start seed) or update
-  from observed trades the same way Phase 8's risk-engine reference
-  price does — consistency between the two would be nice but isn't
-  required.
-- Confirm on-fill behavior: replace only the filled side, or cancel
-  and replace both sides on any fill? Both are common real
-  market-making behaviors; pick whichever produces more "interesting"
-  synthetic flow per this phase's actual goal.
-- Confirm `on_tick()` cadence in `strategy_runner` (fixed interval?
-  driven by engine event count, mirroring Phase 6's message-count-based
-  snapshot cadence for consistency?).
-- Check Phase 2's actual benchmark harness input format before
-  finalizing `strategy_runner`'s output format (R5) — this design
-  assumes compatibility is achievable but hasn't verified the concrete
-  shape Phase 2 expects.
+- **`reference_price`: static, plus an explicit opt-in drift.**
+  `MarketMakerConfig::drift_per_tick` (default `0`, matching the
+  unit-test expectation of a purely static quote) lets
+  `strategy_runner` oscillate the reference by a fixed number of ticks
+  per `on_tick`, so a live session actually re-quotes at new levels and
+  occasionally crosses its own resting side — which is what bootstraps
+  organic trades for the momentum strategy to react to. See
+  `strategy/MarketMakerStrategy.hpp`.
+- **On-fill behavior: both sides.** `MarketMakerStrategy` cancels and
+  replaces *both* resting quotes on any fill (not just the filled
+  side) — it keeps a live two-sided quote at all times and produces
+  steadier synthetic flow than single-side replacement. See
+  `strategy/MarketMakerStrategy.hpp`/`.cpp`.
+- **`on_tick()` cadence: a simple per-iteration loop.**
+  `apps/strategy_runner/main.cpp` drives `on_tick()` once per loop
+  iteration of a fixed tick budget (not event-count-driven like Phase
+  6's snapshot cadence) — the simplest option that still satisfies the
+  DoD's "extended synthetic session" requirement.
+  `MomentumConfig::probe_every_ticks` (default `0`, disabled in unit
+  tests) additionally has `MomentumStrategy` fire a small bootstrap
+  probe order every N ticks, breaking the chicken-and-egg problem where
+  a purely trade-reactive strategy never acts on an empty tape.
+- **Phase 2 benchmark harness input-format check: deferred, not
+  code.** `strategy_runner` itself is done and verified to produce
+  realistic flow (a 3000-tick run generates ~3993 trades with no
+  invariant violation), satisfying R4 and the DoD. Actually re-running
+  Phase 2's harness against that flow and recording a before/after
+  comparison (R5's benchmarking payoff, tasks.md T12–T13) waits on a
+  controlled Linux run — the same environment caveat noted in Phase
+  8's `benchmarks/results/phase-08-order-size.md` (this dev box's
+  Windows toolchain produces noise-dominated numbers, not a fair
+  before/after comparison).

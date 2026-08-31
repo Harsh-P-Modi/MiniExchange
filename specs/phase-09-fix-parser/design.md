@@ -1,10 +1,12 @@
 # Phase 9 — Design: Minimal FIX Parser
 
-Status: **DRAFT — pending your approval before tasks.md is executed**
+Status: **APPROVED** — `tasks.md` is written from this version and the
+phase is implemented and test-verified.
+
+## 0. Resolved Open Questions (from requirements.md)
 
 This design resolves the three open questions from requirements.md as
-follows (flagging these as proposed resolutions, not yet confirmed by
-you — override anything below before this is treated as final):
+follows:
 
 - **Q1 (ClOrdID→OrderId):** numeric-only. `ClOrdID` (tag 11) is parsed
   as a `uint64_t` literal; non-numeric values are rejected with a
@@ -12,10 +14,10 @@ you — override anything below before this is treated as final):
   Simplest option, consistent with the stated non-goal of full FIX
   spec coverage.
 - **Q2 (FIX version):** targeting **FIX 4.2** semantics for header tags
-  (`8`/`9`/`35`/`49`/`56`/`34`/`52`). This is the one pure assumption
-  in this design — flag if you want 4.4 instead; at this minimal scope
-  (3 message types, no repeating groups) the practical difference is
-  small, but the header tag list below assumes 4.2.
+  (`8`/`9`/`35`/`49`/`56`/`34`/`52`), confirmed via tasks.md T0. At
+  this minimal scope (3 message types, no repeating groups) the
+  practical difference from 4.4 is small, but the header tag list
+  below assumes 4.2 throughout.
 - **Q3 (cancel correlation):** falls out of Q1 for free. Since ClOrdID
   is numeric-only and equals `OrderId` directly, tag `41`
   (OrigClOrdID) on a `35=F` message is parsed the same way and used
@@ -147,20 +149,19 @@ NFR1's "specific, loggable reason" requirement.
 
 - Parser output (`NewOrder` / cancel `OrderId`) feeds into the same
   `EngineAPI::submit`/`cancel` entry point used by the TCP adapter —
-  and, once Phase 8 lands, that entry point is `RiskEngine`, not
-  `MatchingEngine` directly. This adapter should be written against
-  `EngineAPI`, not `MatchingEngine`, so it composes with Phase 8
-  automatically regardless of build order between Phases 8 and 9.
-- `NewOrder` built from a `35=D` message needs an `owner` (`ClientId`)
-  if Phase 8's retrofit has landed — same as the TCP adapter, this
-  adapter should populate `owner` from whatever session/connection
-  identity concept applies to a FIX session (likely `SenderCompID`,
-  tag `49`, mapped to a `ClientId` the same way the TCP adapter maps a
-  connection to one). Flagging this as a dependency to check at
-  implementation time: if Phase 8 lands first, this adapter needs a
-  `SenderCompID → ClientId` mapping step; if Phase 9 lands first, that
-  mapping can be deferred (stub/default `ClientId`) and retrofitted
-  when Phase 8 arrives.
+  and, since Phase 8 landed first, that entry point is `RiskEngine` in
+  the full server, not `MatchingEngine` directly. This adapter is
+  written against `EngineAPI`, not `MatchingEngine`, so it composes
+  with Phase 8 transparently.
+- **Resolved (T1's finding): Phase 8 landed before Phase 9,** so this
+  adapter builds the real `SenderCompID → ClientId` mapping rather than
+  a stub. `FixSession` (`adapters/fix/FixSession.hpp/.cpp`) is the
+  composition point: it's constructed with an `EngineAPI&`, a fixed
+  `ClientId`, and the session's own/peer CompID strings, and stamps
+  that `ClientId` as `owner` on every `NewOrder` it submits — the same
+  role the TCP adapter's per-connection `ClientId` plays. The design's
+  stub contingency for the reverse build order turned out to be
+  unnecessary.
 
 ## 7. Testing approach
 
@@ -180,14 +181,20 @@ NFR1's "specific, loggable reason" requirement.
   reusing the encoder's own checksum routine, to actually catch a
   checksum bug rather than confirm it round-trips with itself).
 
-## 8. Open items carried into tasks.md
+## 8. Open items — resolved
 
-- Confirm FIX 4.2 vs 4.4 (Q2) — currently assumed 4.2; flag if wrong
-  before implementation starts, since it affects the header tag list
-  in §4.
-- Confirm sequencing with Phase 8: does this land before or after the
-  ClientId retrofit? Affects whether §6's `SenderCompID → ClientId`
-  mapping is built now or stubbed.
-- Confirm `SenderCompID`/`TargetCompID` (tags `49`/`56`) placeholder
-  values — config constants, or does the "single supported symbol"
-  scope also imply a single fixed session identity pair?
+- FIX 4.2 vs 4.4 (Q2) — **resolved: 4.2** (tasks.md T0).
+- Sequencing with Phase 8 — **resolved: Phase 8 landed first**
+  (tasks.md T1), so §6 builds the real `SenderCompID → ClientId`
+  mapping via `FixSession`, not a stub.
+- `SenderCompID`/`TargetCompID` (tags `49`/`56`) — **resolved: caller-
+  supplied config strings**, passed to `FixSession`'s constructor
+  (`our_comp_id`/`peer_comp_id`) rather than hardcoded constants. Per
+  the Charter's non-goal of a production-grade gateway, `FixSession` is
+  a complete, independently-tested library (`tests/fix_adapter_test.cpp`)
+  but — like the rest of Phase 9's scope — is not wired into a live
+  socket listener in `apps/exchange_server/`; that would mean adding a
+  FIX transport alongside Phase 5's TCP gateway, which is a new-scope
+  decision belonging to its own future phase, not implied by this
+  phase's Definition of Done (round-trip + `EngineResponse` encoding
+  correctness, verified by tests).

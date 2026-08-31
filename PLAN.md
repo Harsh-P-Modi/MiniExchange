@@ -100,10 +100,11 @@ output format.
 
 **Patterns used, deliberately kept to a short list** (Adapter, Ports &
 Adapters, lightweight Observer for `EventSink`, plain constructor-based
-dependency injection). Strategy/Factory are deferred until a phase
-actually needs them (Phase 10 strategies, Phase 5+ adapter wiring). No
-pattern gets added speculatively — a recruiter should see restraint,
-not a design-pattern showcase.
+dependency injection, Decorator once Phase 8's `RiskEngine` needed it,
+Strategy once Phase 10's synthetic-order-flow strategies needed it).
+Factory was never added — no phase ended up needing it. No pattern got
+added speculatively — a recruiter should see restraint, not a
+design-pattern showcase.
 
 Single-symbol, single-threaded is a deliberate choice, not a limitation
 to apologize for: most real exchanges pin one instrument to one thread
@@ -111,47 +112,17 @@ rather than share a book across threads and pay for locking/cache
 contention. Multi-symbol later means "N single-threaded engines," each
 pinned to its own thread — not one engine made thread-safe internally.
 
-## Repo layout (locked)
+## Repo layout
 
-```
-MiniExchange/
-├── PLAN.md
-├── CHARTER.md
-├── .kiro/steering/      ← product.md, tech.md, structure.md, learning-doc.md
-├── specs/
-│   ├── phase-01-order-book/
-│   ├── phase-02-benchmarking/
-│   ├── phase-03-memory-pool/
-│   ├── phase-04-lockfree-queue/
-│   ├── phase-05-tcp-gateway/
-│   ├── phase-06-udp-feed/
-│   ├── phase-07-binary-protocol/
-│   ├── phase-08-risk-engine/
-│   ├── phase-09-fix-parser/
-│   └── phase-10-strategy-sdk/
-├── interfaces/          ← PORTS: EngineAPI (input), EventSink (output)
-├── engine/              ← MatchingEngine (implements EngineAPI, uses orderbook + core, no I/O)
-├── orderbook/           ← OrderBook data structures (price tree, intrusive list)
-├── core/                ← Order.hpp, Trade.hpp, Events.hpp, Types.hpp, Price.hpp,
-│                            Quantity.hpp, Side.hpp — domain primitives, no logic
-├── adapters/            ← reusable translation libs (added as needed)
-│   ├── tcp/             ← Phase 5
-│   ├── udp/              ← Phase 6
-│   ├── binary_protocol/ ← Phase 7
-│   └── fix/             ← Phase 9
-├── apps/                ← executables / composition roots
-│   ├── cli/             ← Phase 1: main.cpp wires CLIParser → engine → ConsolePrinter
-│   ├── replay/          ← later: CSV parser + engine, no CLI dependency
-│   └── benchmark/       ← Phase 2+: engine + Google Benchmark
-├── benchmarks/
-├── tests/
-├── scripts/
-├── third_party/
-└── docs/
-```
-(Only `apps/cli/` exists from Phase 1. `adapters/*` and the other
-`apps/*` get created at the phase that introduces them — no empty
-placeholder folders ahead of time.)
+This was locked at Phase 0 as a forward-looking sketch; the tree
+actually grew slightly differently as phases landed (`orderbook/`
+absorbed Phase 3's `OrderPool` instead of a separate `memory_pool/`;
+`apps/replay/` and `third_party/` were never needed — every dependency
+is `FetchContent`-vendored instead). See `.kiro/steering/structure.md`'s
+"Repo layout" section for the authoritative, kept-current tree and the
+reasoning behind those divergences — not duplicated here, to avoid the
+two copies drifting apart the way this one did relative to the actual
+repo.
 
 ## Locked decisions (Phase 0)
 
@@ -195,17 +166,20 @@ mentioned).
 
 ## Status
 
-**Phase 1: spec complete, ready for implementation.** `requirements.md`,
-`design.md`, and `tasks.md` are all written and approved — see
-`specs/phase-01-order-book/`. Execute `tasks.md` one task at a time
-(per `.kiro/steering/structure.md`'s execution rule); `docs/adr/` and
-`docs/LEARNING.md` don't exist yet in the repo because they're created
-*by* that execution (Task 1 creates the skeleton including `docs/adr/`;
-`LEARNING.md` accumulates from Task 2 onward), not pre-populated here.
+**All 10 phases complete.** Every phase has an approved
+`requirements.md` → `design.md` → `tasks.md` chain, executed task by
+task per `.kiro/steering/structure.md`'s execution rule, with
+`docs/adr/` and `docs/LEARNING.md` updated alongside the code (see
+`docs/LEARNING.md`, which has one top-level section per phase). See
+`README.md`'s phase status table for the current per-phase build/test
+state, and each phase's `tasks.md` completion summary for what was
+actually verified (tests passing, benchmark numbers recorded or
+explicitly deferred to a controlled Linux run where this dev box's
+Windows toolchain made a number untrustworthy).
 
-**Phases 2–10: `requirements.md` only.** Each has an explicit "Open
-Questions" section that must be resolved (in conversation, the same way
-Phase 1's were) before that phase's `design.md` gets written — see
-`.kiro/steering/structure.md`'s "Adding a new phase" section for the
-exact process. Nothing beyond `requirements.md` should exist for these
-phases yet; that's intentional, not a gap.
+Network-facing pieces (`apps/exchange_server`, the epoll TCP gateway,
+the UDP feed) are Linux-only by design (Phase 5 onward) and are
+built/tested on Ubuntu 24.04 per CI; the engine, order book, risk
+layer, FIX adapter, strategy SDK, and their tests are platform-neutral
+and also build under a Windows msys2/UCRT toolchain for local
+development.

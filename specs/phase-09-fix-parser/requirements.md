@@ -1,6 +1,8 @@
 # Phase 9 — Requirements: Minimal FIX Parser
 
-Status: **DRAFT — spec-only pass, design.md deferred until this phase starts**
+Status: **APPROVED** — Open Questions resolved below; `design.md` and
+`tasks.md` are built on this version and the phase is implemented and
+test-verified (`fix_adapter_test` = 31 tests / 6 suites passing).
 
 ## 1. Scope
 
@@ -47,23 +49,21 @@ production-grade or spec-complete FIX engine.
 - ExecutionReport correctly reflects fills/rejects from real
   `EngineResponse`/`Trade` data in tests.
 
-## 5. Open Questions (resolve before design.md for this phase)
+## 5. Open Questions — Resolved
 
-1. **ClOrdID → OrderId mapping** — FIX's `ClOrdID` (tag 11) is
-   spec'd as a string, but the engine's `OrderId` is a `uint64_t`.
-   Parse the string as a numeric literal and reject non-numeric
-   ClOrdIDs (simplest, but arguably "not really FIX-compliant" since
-   real ClOrdIDs are often alphanumeric)? Or introduce a string↔uint64
-   mapping table in the adapter (more faithful to real FIX usage, more
-   code for a "minimal" parser)? Leaning toward the numeric-only
-   approach given the stated non-goal of full spec coverage, but
-   flagging since it's a real compromise, not a free choice.
-2. **FIX version** — FIX 4.2 vs 4.4 tag semantics differ in places;
-   which are you targeting (matters for exactly which tags are
-   "standard" for the header, e.g. `8`/`9`/`35`/`49`/`56`/`34`/`52`)?
-3. **Cancel-request correlation** — `35=F` typically references the
-   *original* order via `41` (OrigClOrdID), with its own new `11`
-   (ClOrdID) for the cancel request itself. Given `MatchingEngine`'s
-   `cancel(OrderId)` interface, does this adapter need to track its
-   own ClOrdID↔OrderId table, or is collapsing `41`/`11` acceptable for
-   this minimal scope?
+1. **ClOrdID → OrderId mapping** — **Numeric-only.** `ClOrdID` (tag
+   `11`) is parsed as a `uint64_t` literal; non-numeric values are
+   rejected with `InvalidClOrdIdFormat`. Simplest option, consistent
+   with the stated non-goal of full FIX spec coverage. See design.md
+   §0/§3 for the full resolution.
+2. **FIX version** — **FIX 4.2.** At this minimal scope (3 message
+   types, no repeating groups) the practical difference from 4.4 is
+   small; the header tag list (`8`/`9`/`35`/`49`/`56`/`34`/`52`) in
+   design.md §4 assumes 4.2 semantics throughout.
+3. **Cancel-request correlation** — **Falls out of Q1 for free.**
+   Since ClOrdID is numeric-only and equals `OrderId` directly, `41`
+   (OrigClOrdID) on a `35=F` message is parsed the same way and used
+   directly as the `cancel()` argument, preferring `41` when present
+   and falling back to `11` otherwise. No separate ClOrdID↔OrderId
+   tracking table is needed — the adapter is stateless with respect to
+   correlation. See design.md §0/§3.

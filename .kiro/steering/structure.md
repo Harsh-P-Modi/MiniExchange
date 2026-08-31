@@ -2,6 +2,11 @@
 
 ## Repo layout
 
+This is the layout as it actually stands with all 10 phases complete
+(originally a forward-looking plan; kept in sync as phases landed —
+see the note below the tree for the two places reality diverged from
+the original Phase-0 sketch):
+
 ```
 MiniExchange/
 ├── PLAN.md                     ← master phase plan, single source of truth for ordering
@@ -22,26 +27,43 @@ MiniExchange/
 │   └── phase-10-strategy-sdk/
 ├── interfaces/                  ← PORTS: EngineAPI (input port), EventSink (output port)
 ├── engine/                     ← MatchingEngine: implements EngineAPI, uses orderbook + core, zero I/O
-├── orderbook/                  ← OrderBook: price tree, intrusive list, PriceLevel
-├── core/                       ← Order.hpp, Trade.hpp, Events.hpp, Types.hpp, Price.hpp,
-│                                   Quantity.hpp, Side.hpp — domain primitives, no logic
-├── adapters/                   ← reusable translation libraries (created when needed)
+├── orderbook/                  ← OrderBook: price tree, intrusive list, PriceLevel, OrderPool (Phase 3)
+├── core/                       ← Order.hpp, Trade.hpp, Events.hpp, Types.hpp (Price, Quantity, Side,
+│                                   OrderId, ClientId, SymbolId, Sequence) — domain primitives, no logic
+├── risk/                       ← RiskEngine: Decorator over EngineAPI (Phase 8) — fat-finger,
+│                                   tick-size, price-band; STP itself lives in engine/ (ADR-007)
+├── strategy/                   ← Strategy interface + MarketMakerStrategy/MomentumStrategy (Phase 10)
+├── lockfree_queue/              ← SpscRingBuffer (Phase 4)
+├── adapters/                   ← reusable translation libraries
 │   ├── tcp/                    ← Phase 5
+│   ├── text_protocol/          ← Phase 5 (extracted from apps/cli/)
 │   ├── udp/                    ← Phase 6
 │   ├── binary_protocol/        ← Phase 7
 │   └── fix/                    ← Phase 9
 ├── apps/                       ← executables / composition roots
 │   ├── cli/                    ← Phase 1: main.cpp wires CLIParser → engine → ConsolePrinter
-│   ├── replay/                 ← later: CSV parser + engine, no CLI dependency
-│   └── benchmark/               ← Phase 2+: engine + Google Benchmark
-├── memory_pool/                ← added Phase 3
-├── lockfree_queue/              ← added Phase 4
-├── benchmarks/
+│   ├── benchmark/               ← Phase 2+: engine + Google Benchmark
+│   ├── exchange_server/         ← Phase 5+: TCP/UDP/binary/risk composition root (Linux only)
+│   └── strategy_runner/         ← Phase 10: strategies + RiskEngine composition root
+├── tools/                      ← workload_generator (Phase 2), protocol_benchmark (Phase 7)
+├── benchmarks/results/
 ├── tests/
 ├── scripts/
-├── third_party/
 └── docs/
 ```
+
+Two deliberate divergences from the original Phase-0 sketch, corrected
+here rather than left silently stale: `memory_pool/` was never created
+as its own top-level directory — Phase 3's `OrderPool` turned out to
+belong in `orderbook/` (it's the allocator behind `OrderBook`'s own
+order lifetime, not a general-purpose facility used elsewhere), so it
+lives at `orderbook/order_pool.hpp/.cpp`. `apps/replay/` and
+`third_party/` were never created at all — no phase's `requirements.md`
+ever called for a CSV-replay app (Phase 10 explicitly chose a new
+`apps/strategy_runner/` over folding into a `replay/` app that doesn't
+exist — see `specs/phase-10-strategy-sdk/requirements.md` §5), and
+every dependency is `FetchContent`-vendored (GoogleTest, Google
+Benchmark, nlohmann/json) rather than vendored into `third_party/`.
 
 ## Module responsibility boundaries
 
@@ -75,6 +97,18 @@ lower layers never know about, or depend on, anything above them.
   knowledge of CLI/TCP/FIX/UDP. Holds an injected `EventSink*`
   (constructor injection; a no-op default is fine when nobody's
   listening) and calls it alongside returning `EngineResponse`.
+- `risk/` (Phase 8): `RiskEngine`, a Decorator over `EngineAPI` — see
+  ADR-007. Owns exactly the three stateless, pre-matching config checks
+  (fat-finger, tick-size, price-band); self-trade prevention is the
+  deliberate exception that lives in `engine/` instead (matching-time
+  concern, ADR-007's ordering argument). Depends on `interfaces/` and
+  `core/` only — never `orderbook/` directly, since it only ever talks
+  to its wrapped `EngineAPI`, never book internals.
+- `strategy/` (Phase 10): `Strategy` interface plus
+  `MarketMakerStrategy`/`MomentumStrategy` — ordinary `EngineAPI`
+  clients with no privileged access to book state (NFR1, `strategy/README.md`),
+  proving the port abstraction generalizes to algorithmic clients. Not
+  profit-seeking; exists to generate realistic synthetic order flow.
 - `adapters/*`: **reusable libraries**, not executables. Translate an
   external protocol/format into `EngineAPI` calls, translate
   `EngineResponse` back into that protocol/format, and optionally

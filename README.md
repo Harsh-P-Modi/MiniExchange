@@ -25,8 +25,8 @@ and (from Phase 2 on) benchmark numbers.
 | 6 | UDP market-data feed (multicast simulation) | ✅ Complete |
 | 7 | Binary wire protocol (vs JSON baseline) | ✅ Complete |
 | 8 | Risk engine (fat-finger, tick-size, price-band, self-trade prevention) | ✅ Complete |
-| 9 | Minimal FIX parser (35=D/F/8) | ⬜ Planned |
-| 10 | Strategy SDK (synthetic order flow) | ⬜ Planned |
+| 9 | Minimal FIX parser (35=D/F/8) | ✅ Complete |
+| 10 | Strategy SDK (synthetic order flow) | ✅ Complete |
 
 > **Build/CI target is Linux (Ubuntu 24.04).** The network-facing pieces
 > (`apps/exchange_server`, the epoll TCP gateway, the UDP feed) are Linux-only
@@ -113,6 +113,42 @@ active:
   checks *before* delegating — a rejected order consumes no `OrderId` and has
   zero effect on book state.
 
+### The FIX adapter (Phase 9)
+
+A minimal FIX 4.2 parser/encoder (`adapters/fix/`) covering exactly three
+message types — `35=D` (NewOrderSingle), `35=F` (OrderCancelRequest), `35=8`
+(ExecutionReport) — enough to demonstrate protocol understanding, not a
+spec-complete gateway:
+
+- **SOH-delimited tokenizing** with checksum (`10`) and BodyLength (`9`)
+  validated before any business tag is read, so a malformed envelope never
+  reaches message-type-specific parsing.
+- **Numeric `ClOrdID`** (tag `11`) doubles as the engine's `OrderId` directly —
+  the simplest compliant compromise for this scope, and it collapses
+  cancel-request correlation (`41`/`11`) for free: no separate ClOrdID↔OrderId
+  table needed.
+- **Every malformed-input path returns a distinct, loggable `FixErrorReason`**
+  (`ChecksumMismatch`, `InvalidClOrdIdFormat`, `UnsupportedOrdType`, ...) —
+  never a generic parse failure, matching real FIX debugging practice.
+- Written against `EngineAPI`, so it composes with the Phase 8 `RiskEngine`
+  automatically — a FIX order gets the same risk checks as a TCP order.
+
+### The Strategy SDK (Phase 10)
+
+`strategy/` provides a minimal `Strategy` interface plus two illustrative,
+**non-profit-seeking** implementations that exist solely to generate
+realistic synthetic order flow for exercising the rest of the exchange
+(`apps/strategy_runner/`):
+
+- **`MarketMakerStrategy`** — quotes a symmetric bid/ask around a reference
+  price, re-quoting via cancel-then-resubmit whenever a resting quote fills.
+- **`MomentumStrategy`** — derives a naive directional signal from a
+  ring-buffer of recent trade prices and fires a `MarketOrder` when the delta
+  crosses a threshold.
+- Both are ordinary `EngineAPI` callers with no privileged book access —
+  proving the port abstraction generalizes to algorithmic clients, not just
+  human/network ones (see `strategy/README.md`).
+
 ## Try it
 
 The single-process CLI (`apps/cli`) drives the engine directly:
@@ -149,11 +185,11 @@ Hexagonal (ports & adapters). Dependency direction always points inward — lowe
 layers never know about upper layers.
 
 ```
-   apps/cli    apps/exchange_server    apps/benchmark        ← executables /
-       │              │                      │                  composition roots
-       │        adapters/{tcp,udp,binary_protocol,text_protocol}
-       │              │                      │
-       └──────────────┴──────────┬───────────┘
+   apps/cli  apps/exchange_server  apps/benchmark  apps/strategy_runner  ← executables /
+       │              │                  │                  │              composition roots
+       │    adapters/{tcp,udp,binary_protocol,text_protocol,fix}    strategy/
+       │              │                  │                  │
+       └──────────────┴──────────┬───────┴──────────────────┘
                                   ▼
               ===== interfaces/ (PORTS) =====
                 EngineAPI   (input:  submit / cancel)
@@ -168,7 +204,7 @@ layers never know about upper layers.
                               zero I/O, single-threaded)
                                   ▼
                   orderbook/  (OrderBook: price tree + intrusive
-                               per-level order queues; memory_pool)
+                               per-level order queues; OrderPool)
                                   ▼
                        core/  (Order, Trade, Price, Quantity, Side,
                                OrderId, ClientId, Sequence, Events —
@@ -188,8 +224,10 @@ Key principles:
 - **The risk engine is a decorator, not a fork of the engine** — the matching
   engine stays a pure matching engine; risk is an opt-in layer wrapping it.
 - **Design patterns kept to a short, earned list**: Adapter, Ports & Adapters,
-  a lightweight Observer for `EventSink`, plain constructor DI, and Decorator
-  (Phase 8). Nothing speculative.
+  a lightweight Observer for `EventSink`, plain constructor DI, Decorator
+  (Phase 8), and Strategy (Phase 10's `Strategy` interface — added only once
+  synthetic order-flow generation actually needed it, per the Charter's
+  "nothing speculative" rule). Factory was never added — no phase needed it.
 
 ## Documentation
 
