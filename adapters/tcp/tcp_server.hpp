@@ -2,6 +2,7 @@
 #define MINIEXCHANGE_ADAPTERS_TCP_TCP_SERVER_HPP
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -16,6 +17,16 @@ namespace miniexchange::tcp {
 // claiming more than this disconnects the client — prevents OOM from
 // a malformed or malicious peer.
 static constexpr uint32_t kMaxFrameSize = 4096;
+
+// Default cap on a single connection's unsent outbound backlog
+// (Phase 11 R4). A client that stops reading makes its write_buffer
+// grow without bound as responses keep queuing; once the backlog would
+// exceed this, that connection is dropped rather than allowed to
+// consume memory without limit. 1 MiB is far above any legitimate
+// single-burst response for this protocol, so a well-behaved client
+// never approaches it. Pass 0 to the constructor to disable the bound
+// (used by framing-layer unit tests that never exercise the write path).
+static constexpr std::size_t kDefaultMaxWriteBufferBytes = 1u << 20;
 
 // Callback invoked for each fully-framed message received from a
 // client. Set via set_frame_handler(); if unset, frames are silently
@@ -55,7 +66,12 @@ struct Connection {
 // epoll instance) whose lifetimes are tied to this object.
 class TcpServer {
 public:
-    explicit TcpServer(uint16_t port);
+    // port: 0 for an OS-assigned ephemeral port.
+    // max_write_buffer_bytes: per-connection outbound backlog cap (R4).
+    //   Defaults to kDefaultMaxWriteBufferBytes; 0 disables the bound.
+    explicit TcpServer(uint16_t port,
+                       std::size_t max_write_buffer_bytes =
+                           kDefaultMaxWriteBufferBytes);
     ~TcpServer();
 
     TcpServer(const TcpServer&) = delete;
@@ -101,6 +117,7 @@ public:
 
 private:
     uint16_t port_;
+    std::size_t max_write_buffer_bytes_;  // R4: 0 = unbounded
     int listener_fd_ = -1;
     int epoll_fd_ = -1;
     std::atomic<bool> shutdown_requested_{false};

@@ -32,7 +32,12 @@ EngineResponse RiskEngine::submit(const NewOrder& order) {
         order);
 
     if (check != EngineResult::Accepted) {
-        return EngineResponse{check, {}, Quantity{0}};
+        // Phase 11 R2: carry the rejected order's id back so a client with
+        // multiple orders in flight can correlate this rejection. The id
+        // lives on every NewOrder alternative (LimitOrder / MarketOrder).
+        const OrderId id =
+            std::visit([](const auto& o) { return o.id; }, order);
+        return EngineResponse{check, {}, Quantity{0}, id};
     }
 
     // Passed risk: forward to the wrapped engine.

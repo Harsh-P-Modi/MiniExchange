@@ -253,19 +253,18 @@ TEST(ParseToPushTest, ParseErrorRendersDirectResponse) {
     EXPECT_EQ(framed.size(), 4 + response.size());
 }
 
-TEST(ParseToPushTest, QueueFullRejectsSilently) {
-    // R4 back-pressure: when inbound queue is full, try_push returns
-    // false and the frame is dropped (client command lost — acceptable
-    // per requirements.md R4).
+TEST(ParseToPushTest, QueueFullRendersExplicitRejection) {
+    // Phase 11 R1: when the inbound queue is full, the frame handler must
+    // NOT drop the order silently. It checks try_push's return value and,
+    // on false, renders + frames an explicit rejection back to the client
+    // via the same path used for ParseError (design.md §1). This test
+    // reproduces that frame-handler logic without a live TcpServer.
     miniexchange::SpscRingBuffer<miniexchange::TaggedCommand, 4> queue;
 
     miniexchange::TaggedCommand cmd;
     cmd.client = miniexchange::ClientId{1};
-    cmd.command = miniexchange::LimitOrder{
-        miniexchange::OrderId{1}, miniexchange::Side::Buy,
-        miniexchange::Price{100}, miniexchange::Quantity{10}};
 
-    // Fill the queue to capacity
+    // Fill the queue to capacity.
     for (int i = 0; i < 4; ++i) {
         cmd.command = miniexchange::LimitOrder{
             miniexchange::OrderId{static_cast<uint64_t>(i)},
@@ -274,6 +273,37 @@ TEST(ParseToPushTest, QueueFullRejectsSilently) {
         ASSERT_TRUE(queue.try_push(cmd));
     }
 
-    // Next push should fail (back-pressure)
-    EXPECT_FALSE(queue.try_push(cmd));
+    // One more valid command arrives while the queue is full.
+    cmd.command = miniexchange::LimitOrder{
+        miniexchange::OrderId{99}, miniexchange::Side::Buy,
+        miniexchange::Price{100}, miniexchange::Quantity{10}};
+
+    bool client_got_rejection = false;
+    std::string rejection_frame;
+    if (!queue.try_push(cmd)) {
+        // This is exactly what apps/exchange_server/main.cpp's frame
+        // handler now does on a full queue.
+        std::string err =
+            miniexchange::text_protocol::render_error(
+                "system busy — order not accepted");
+        rejection_frame = miniexchange::tcp::frame_message(err);
+        client_got_rejection = true;
+    }
+
+    EXPECT_TRUE(client_got_rejection);
+    EXPECT_FALSE(rejection_frame.empty());
+    EXPECT_NE(rejection_frame.find("ERROR:"), std::string::npos);
+
+    // The dropped order must not have reached the engine: the queue holds
+    // exactly the 4 earlier commands, none of them OrderId 99.
+    int drained = 0;
+    miniexchange::TaggedCommand popped;
+    while (queue.try_pop(popped)) {
+        auto* limit =
+            std::get_if<miniexchange::LimitOrder>(&popped.command);
+        ASSERT_NE(limit, nullptr);
+        EXPECT_NE(limit->id, miniexchange::OrderId{99});
+        ++drained;
+    }
+    EXPECT_EQ(drained, 4);
 }

@@ -216,6 +216,15 @@ target_link_libraries(udp_e2e_dod_test PRIVATE
     GTest::gtest_main engine adapters_udp miniexchange_warnings)
 gtest_discover_tests(udp_e2e_dod_test)
 
+# Phase 11 T5: QueuedEventSink — decouples feed publication from the match
+# call stack. Header-only sink + platform-neutral drain loop, so it tests
+# on every platform even though the drain thread is spawned only by the
+# Linux-only exchange_server app.
+add_executable(queued_event_sink_test tests/queued_event_sink_test.cpp)
+target_link_libraries(queued_event_sink_test PRIVATE
+    GTest::gtest_main engine adapters_udp miniexchange_warnings)
+gtest_discover_tests(queued_event_sink_test)
+
 # TCP adapter library (Linux only — epoll-based, nonblocking)
 if(UNIX AND NOT APPLE)
     add_library(adapters_tcp
@@ -283,6 +292,13 @@ if(UNIX AND NOT APPLE)
     add_executable(binary_codec_alloc_test tests/binary_codec_alloc_test.cpp)
     target_link_libraries(binary_codec_alloc_test PRIVATE
         GTest::gtest_main adapters_binary_protocol miniexchange_warnings)
+    # Same custom new->malloc / delete->free allocator pattern as
+    # protocol_bench.cpp; GCC 13+ can false-positive -Wmismatched-new-delete
+    # on it. Scoped to this TU; -Werror stays on everywhere else.
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(binary_codec_alloc_test PRIVATE
+            -Wno-mismatched-new-delete)
+    endif()
     gtest_discover_tests(binary_codec_alloc_test)
 
     # Phase 7: JSON codec library (benchmark-only, never linked into core/engine)
@@ -367,6 +383,15 @@ add_executable(r8_spin_test tests/r8_spin_test.cpp)
 target_link_libraries(r8_spin_test PRIVATE GTest::gtest_main miniexchange_warnings)
 gtest_discover_tests(r8_spin_test)
 
+# Phase 11 T3: engine-thread dispatch boundary (exception → InternalError,
+# not std::terminate). engine_loop.hpp is platform-neutral (core/ +
+# interfaces/ only), so this test runs on every platform even though the
+# exchange_server app it was extracted from is Linux-only.
+add_executable(engine_loop_test tests/engine_loop_test.cpp)
+target_link_libraries(engine_loop_test PRIVATE
+    GTest::gtest_main engine miniexchange_warnings)
+gtest_discover_tests(engine_loop_test)
+
 # Benchmark harness (Phase 2) — NOT registered with ctest; run manually.
 add_executable(benchmark_harness
     apps/benchmark/main.cpp
@@ -397,4 +422,15 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(protocol_benchmark PRIVATE
         benchmark::benchmark
         adapters_binary_protocol json_codec miniexchange_warnings)
+    # protocol_bench.cpp deliberately overrides global operator new/delete
+    # to count allocations, routing new->malloc and delete->free (which ARE
+    # matched). GCC 13+ can't see through the custom allocator when
+    # nlohmann/json's create()/unique_ptr allocation sites are inlined, and
+    # false-positives -Wmismatched-new-delete on the std::free() inside the
+    # custom operator delete. Suppress it for this one benchmark TU only;
+    # the rest of the tree keeps -Werror.
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(protocol_benchmark PRIVATE
+            -Wno-mismatched-new-delete)
+    endif()
 endif()

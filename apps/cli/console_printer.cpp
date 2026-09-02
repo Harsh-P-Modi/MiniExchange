@@ -30,6 +30,8 @@ const char* ConsolePrinter::result_to_string(EngineResult result) {
             return "REJECTED: QuantityTooLarge";
         case EngineResult::TickSizeMisaligned:
             return "REJECTED: TickSizeMisaligned";
+        case EngineResult::InternalError:
+            return "REJECTED: InternalError";
     }
     return "UNKNOWN";
 }

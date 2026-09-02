@@ -331,10 +331,24 @@ TEST_F(ReusedOrderIdTest, IdReusableAfterFatFingerRejection) {
     ASSERT_EQ(rejected.status, EngineResult::QuantityTooLarge);
 
     // Same OrderId, now valid — must be ACCEPTED, proving the rejection
-    // never recorded the ID in the engine's ever_seen_ids_ set.
+    // never advanced the engine's per-client monotonic-ID watermark.
     auto accepted = risk.submit(NewOrder{
         LimitOrder{OrderId{42}, Side::Buy, Price{1000}, Quantity{10}}});
     EXPECT_EQ(accepted.status, EngineResult::Accepted);
+}
+
+// Phase 11 R2: a pre-trade risk rejection carries the rejected order's id.
+TEST_F(ReusedOrderIdTest, R2_RiskRejectionCarriesOrderId) {
+    auto rejected = risk.submit(NewOrder{
+        LimitOrder{OrderId{4242}, Side::Buy, Price{1000}, Quantity{500}}});
+    ASSERT_EQ(rejected.status, EngineResult::QuantityTooLarge);
+    EXPECT_EQ(rejected.order_id, OrderId{4242});
+
+    // Also on the market-order path (fat-finger only).
+    auto rejected_mkt = risk.submit(
+        NewOrder{MarketOrder{OrderId{4343}, Side::Sell, Quantity{500}}});
+    ASSERT_EQ(rejected_mkt.status, EngineResult::QuantityTooLarge);
+    EXPECT_EQ(rejected_mkt.order_id, OrderId{4343});
 }
 
 TEST_F(ReusedOrderIdTest, IdReusableAfterTickSizeRejection) {

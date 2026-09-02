@@ -152,6 +152,7 @@ TEST(BinaryGatewayCodecTest, RenderAcceptedWithOneFill) {
     EngineResponse response;
     response.status = EngineResult::Accepted;
     response.remaining_qty = Quantity{0};
+    response.order_id = OrderId{777};  // Phase 11 R2
 
     Trade trade;
     trade.trade_sequence = TradeSequence{1};
@@ -173,6 +174,9 @@ TEST(BinaryGatewayCodecTest, RenderAcceptedWithOneFill) {
     ASSERT_TRUE(ack_decoded.has_value());
     ASSERT_TRUE(std::holds_alternative<AckMsg>(*ack_decoded));
     EXPECT_EQ(std::get<AckMsg>(*ack_decoded).remaining_qty, Quantity{0});
+    // Phase 11 R2: the ack carries the real OrderId, not the old
+    // OrderId{0} placeholder.
+    EXPECT_EQ(std::get<AckMsg>(*ack_decoded).order_id, OrderId{777});
 
     // Decode the TradeNotificationMsg (next 42 bytes).
     auto trade_decoded = decode(std::span<const std::byte>(
@@ -192,6 +196,7 @@ TEST(BinaryGatewayCodecTest, RenderRejection_DuplicateOrderId) {
     EngineResponse response;
     response.status = EngineResult::DuplicateOrderId;
     response.remaining_qty = Quantity{0};
+    response.order_id = OrderId{4242};  // Phase 11 R2
 
     std::string rendered = render_binary(response);
 
@@ -202,6 +207,9 @@ TEST(BinaryGatewayCodecTest, RenderRejection_DuplicateOrderId) {
     ASSERT_TRUE(std::holds_alternative<RejectMsg>(*decoded));
     auto& reject = std::get<RejectMsg>(*decoded);
     EXPECT_EQ(reject.reason_code, 1);  // DuplicateOrderId
+    // Phase 11 R2: the reject carries the rejected order's id, not
+    // OrderId{0}.
+    EXPECT_EQ(reject.order_id, OrderId{4242});
 }
 
 TEST(BinaryGatewayCodecTest, RenderRejection_UnknownOrderId) {

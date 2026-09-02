@@ -290,7 +290,9 @@ TEST_F(IntegrationTest, FillBookCancelEverythingRefillAndSweep) {
     EXPECT_EQ(engine.book().order_count(), 0u);
     // All orders gone — no resting orders remain on either side.
 
-    // Phase C: Verify that cancelled order IDs cannot be reused (lifetime-unique).
+    // Phase C: cancelled order IDs (30-34) are all <= this client's
+    // monotonic watermark (34), so re-submitting them is rejected
+    // (Phase 11 R7 — per-client monotonic uniqueness).
     for (uint64_t id = 30; id <= 34; ++id) {
         auto resp = engine.submit(
             NewOrder{LimitOrder{OrderId{id}, Side::Buy, Price{100}, Quantity{1}}});

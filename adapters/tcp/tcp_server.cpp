@@ -20,7 +20,8 @@ namespace miniexchange::tcp {
 // iteration under normal load.
 static constexpr int kMaxEvents = 64;
 
-TcpServer::TcpServer(uint16_t port) : port_(port) {
+TcpServer::TcpServer(uint16_t port, std::size_t max_write_buffer_bytes)
+    : port_(port), max_write_buffer_bytes_(max_write_buffer_bytes) {
     setup_listener();
     setup_epoll();
 }
@@ -411,6 +412,22 @@ void TcpServer::send_to_client(ClientId client_id, std::string_view data) {
     auto& conn = conn_it->second;
 
     conn.write_buffer.append(data);
+
+    // Phase 11 R4: bound the per-connection outbound backlog. If a client
+    // stops reading, flush_write_buffer() hits EAGAIN and returns with the
+    // data still buffered; meanwhile responses keep arriving here and
+    // write_buffer grows without limit. Once it would exceed the cap, drop
+    // that one connection via the same hard-close path used for an
+    // oversized inbound frame — deregisters from epoll and erases the
+    // Connection. Checked before the flush so `conn` is guaranteed live
+    // (flush_write_buffer may itself close the connection on a write
+    // error). 0 = bound disabled.
+    if (max_write_buffer_bytes_ != 0 &&
+        conn.write_buffer.size() > max_write_buffer_bytes_) {
+        close_connection(fd);
+        return;
+    }
+
     flush_write_buffer(conn);
 }
 

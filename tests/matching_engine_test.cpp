@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <cstdio>
 #include <vector>
 
 #include "core/Events.hpp"
@@ -104,8 +106,10 @@ TEST_F(MatchingEngineTest, DuplicateIdRejectedEvenAfterFullFill) {
     engine.submit(NewOrder{LimitOrder{OrderId{1}, Side::Sell, Price{100}, Quantity{10}}});
     engine.submit(NewOrder{LimitOrder{OrderId{2}, Side::Buy, Price{100}, Quantity{10}}});
 
-    // OrderId{1} is fully filled and no longer resting — but its ID is
-    // lifetime-unique per §2.1, so reusing it must be rejected.
+    // OrderId{1} is fully filled and no longer resting — but reusing it
+    // is still rejected: id 1 is <= this client's watermark (now 2), so
+    // the per-client monotonic rule (Phase 11 R7) catches it just as the
+    // old lifetime-unique set did.
     auto response = engine.submit(
         NewOrder{LimitOrder{OrderId{1}, Side::Buy, Price{50}, Quantity{5}}});
     EXPECT_EQ(response.status, EngineResult::DuplicateOrderId);
@@ -884,8 +888,9 @@ TEST_F(MatchingEngineTest, CancelUnknownIdReturnsUnknownOrderId) {
 }
 
 // Cancel an already-fully-filled order's ID: UnknownOrderId (R13).
-// This distinguishes "resting" from "lifetime-unique" — the ID is in
-// ever_seen_ids_ but NOT in the book, so cancel correctly rejects it.
+// This distinguishes "resting" from "seen before" — the id is at/below
+// the client's monotonic watermark but NOT in the book, so cancel
+// correctly rejects it (cancel never consults the watermark).
 TEST_F(MatchingEngineTest, CancelAlreadyFilledOrderReturnsUnknownOrderId) {
     // Sell 10 at 100, then buy 10 at 100 — sell fully filled, removed from book.
     engine.submit(NewOrder{LimitOrder{OrderId{220}, Side::Sell, Price{100}, Quantity{10}}});
@@ -1191,6 +1196,306 @@ TEST_F(MatchingEngineTest, StpDisabledSelfCrossTradesNormally) {
     EXPECT_EQ(resp.status, EngineResult::Accepted);
     ASSERT_EQ(resp.trades.size(), 1u);
     EXPECT_EQ(resp.trades[0].quantity, Quantity{10});
+}
+
+// ===========================================================================
+// Phase 11 T2 (R2) — every EngineResponse carries the OrderId it answers,
+// on the accept path and on every rejection path, for submit and cancel.
+// ===========================================================================
+
+TEST_F(MatchingEngineTest, R2_AcceptPathCarriesOrderId) {
+    auto resp = engine.submit(
+        NewOrder{LimitOrder{OrderId{55}, Side::Buy, Price{100}, Quantity{10}}});
+    EXPECT_EQ(resp.status, EngineResult::Accepted);
+    EXPECT_EQ(resp.order_id, OrderId{55});
+}
+
+TEST_F(MatchingEngineTest, R2_MarketAcceptPathCarriesOrderId) {
+    engine.submit(
+        NewOrder{LimitOrder{OrderId{1}, Side::Sell, Price{100}, Quantity{10}}});
+    auto resp = engine.submit(
+        NewOrder{MarketOrder{OrderId{56}, Side::Buy, Quantity{10}}});
+    EXPECT_EQ(resp.status, EngineResult::Accepted);
+    EXPECT_EQ(resp.order_id, OrderId{56});
+}
+
+TEST_F(MatchingEngineTest, R2_DuplicateOrderIdRejectionCarriesOrderId) {
+    engine.submit(
+        NewOrder{LimitOrder{OrderId{7}, Side::Buy, Price{100}, Quantity{10}}});
+    auto resp = engine.submit(
+        NewOrder{LimitOrder{OrderId{7}, Side::Buy, Price{101}, Quantity{5}}});
+    EXPECT_EQ(resp.status, EngineResult::DuplicateOrderId);
+    EXPECT_EQ(resp.order_id, OrderId{7});
+}
+
+TEST_F(MatchingEngineTest, R2_InvalidQuantityRejectionCarriesOrderId) {
+    auto resp = engine.submit(
+        NewOrder{LimitOrder{OrderId{8}, Side::Buy, Price{100}, Quantity{0}}});
+    EXPECT_EQ(resp.status, EngineResult::InvalidQuantity);
+    EXPECT_EQ(resp.order_id, OrderId{8});
+}
+
+TEST_F(MatchingEngineTest, R2_InvalidPriceRejectionCarriesOrderId) {
+    auto resp = engine.submit(
+        NewOrder{LimitOrder{OrderId{9}, Side::Buy, Price{0}, Quantity{10}}});
+    EXPECT_EQ(resp.status, EngineResult::InvalidPrice);
+    EXPECT_EQ(resp.order_id, OrderId{9});
+}
+
+TEST_F(MatchingEngineTest, R2_UnknownCancelRejectionCarriesOrderId) {
+    auto resp = engine.cancel(OrderId{404});
+    EXPECT_EQ(resp.status, EngineResult::UnknownOrderId);
+    EXPECT_EQ(resp.order_id, OrderId{404});
+}
+
+TEST_F(MatchingEngineTest, R2_CancelAcceptCarriesOrderId) {
+    engine.submit(
+        NewOrder{LimitOrder{OrderId{11}, Side::Buy, Price{100}, Quantity{10}}});
+    auto resp = engine.cancel(OrderId{11});
+    EXPECT_EQ(resp.status, EngineResult::Accepted);
+    EXPECT_EQ(resp.order_id, OrderId{11});
+}
+
+TEST_F(StpRejectTest, R2_SelfTradePreventedRejectionCarriesOrderId) {
+    engine.submit(NewOrder{owned_limit(1, Side::Sell, 100, 10, /*owner=*/1)});
+    auto resp =
+        engine.submit(NewOrder{owned_limit(2, Side::Buy, 100, 10, /*owner=*/1)});
+    EXPECT_EQ(resp.status, EngineResult::SelfTradePrevented);
+    EXPECT_EQ(resp.order_id, OrderId{2});
+}
+
+TEST(MatchingEnginePoolExhaustionR2, PoolExhaustedRejectionCarriesOrderId) {
+    RecordingEventSink sink;
+    MatchingEngine engine{&sink, /*pool_capacity=*/1};
+    engine.submit(
+        NewOrder{LimitOrder{OrderId{1}, Side::Buy, Price{100}, Quantity{10}}});
+    auto resp = engine.submit(
+        NewOrder{LimitOrder{OrderId{2}, Side::Buy, Price{99}, Quantity{10}}});
+    EXPECT_EQ(resp.status, EngineResult::PoolExhausted);
+    EXPECT_EQ(resp.order_id, OrderId{2});
+}
+
+// The DoD's "pipelined pair" case: two orders submitted back-to-back, each
+// response correlated to its own originating order by OrderId.
+TEST_F(MatchingEngineTest, R2_PipelinedPairCorrelatedByOrderId) {
+    auto r1 = engine.submit(
+        NewOrder{LimitOrder{OrderId{100}, Side::Buy, Price{100}, Quantity{10}}});
+    auto r2 = engine.submit(
+        NewOrder{LimitOrder{OrderId{101}, Side::Sell, Price{100}, Quantity{4}}});
+    EXPECT_EQ(r1.order_id, OrderId{100});
+    EXPECT_EQ(r2.order_id, OrderId{101});
+    // r2 crossed r1 — its trade references both, but the response id is r2's.
+    ASSERT_EQ(r2.trades.size(), 1u);
+    EXPECT_EQ(r2.order_id, OrderId{101});
+}
+
+// ===========================================================================
+// Phase 11 T7 (R7) — per-client monotonic OrderId watermark replaces the
+// unbounded global ever_seen_ids_ set. This is a deliberate semantic
+// narrowing (requirements.md §7): uniqueness is now per-client and
+// monotonic, not global-lifetime. The wire contract (DuplicateOrderId) is
+// unchanged.
+// ===========================================================================
+
+// NEW BEHAVIOUR: the same numeric OrderId from two *different* clients is
+// now accepted from both (previously the second was DuplicateOrderId).
+TEST_F(MatchingEngineTest, R7_SameIdDifferentClientsBothAccepted) {
+    auto a = engine.submit(NewOrder{owned_limit(5, Side::Buy, 100, 10,
+                                                /*owner=*/1)});
+    auto b = engine.submit(NewOrder{owned_limit(5, Side::Buy, 99, 10,
+                                                /*owner=*/2)});
+    EXPECT_EQ(a.status, EngineResult::Accepted);
+    EXPECT_EQ(b.status, EngineResult::Accepted);
+    EXPECT_EQ(engine.book().order_count(), 2u);
+    EXPECT_EQ(engine.tracked_client_count(), 2u);
+}
+
+// UNCHANGED: the same id resubmitted by the *same* client is rejected.
+TEST_F(MatchingEngineTest, R7_SameIdSameClientRejected) {
+    engine.submit(NewOrder{owned_limit(5, Side::Buy, 100, 10, /*owner=*/1)});
+    auto dup = engine.submit(NewOrder{owned_limit(5, Side::Sell, 200, 10,
+                                                  /*owner=*/1)});
+    EXPECT_EQ(dup.status, EngineResult::DuplicateOrderId);
+}
+
+// STRICTER THAN BEFORE: a *lower* id after a higher one, same client, is
+// rejected — monotonicity, not mere set-membership. (The old set-based
+// rule would have accepted id 3 here.)
+TEST_F(MatchingEngineTest, R7_LowerIdAfterHigherSameClientRejected) {
+    auto hi = engine.submit(NewOrder{owned_limit(10, Side::Buy, 100, 10,
+                                                 /*owner=*/1)});
+    ASSERT_EQ(hi.status, EngineResult::Accepted);
+    auto lo = engine.submit(NewOrder{owned_limit(3, Side::Buy, 99, 10,
+                                                 /*owner=*/1)});
+    EXPECT_EQ(lo.status, EngineResult::DuplicateOrderId);
+    // A different client is unaffected by client 1's watermark.
+    auto other = engine.submit(NewOrder{owned_limit(3, Side::Buy, 98, 10,
+                                                    /*owner=*/2)});
+    EXPECT_EQ(other.status, EngineResult::Accepted);
+}
+
+// The equal-to-watermark boundary is a duplicate (<=, not <).
+TEST_F(MatchingEngineTest, R7_EqualToWatermarkRejected) {
+    engine.submit(NewOrder{owned_limit(7, Side::Buy, 100, 10, /*owner=*/1)});
+    auto eq = engine.submit(NewOrder{owned_limit(7, Side::Buy, 99, 10,
+                                                 /*owner=*/1)});
+    EXPECT_EQ(eq.status, EngineResult::DuplicateOrderId);
+}
+
+// A rejected order does NOT advance the watermark (NFR2 — a rejection
+// consumes no id), so the same id can still be accepted once it's valid.
+TEST_F(MatchingEngineTest, R7_RejectedOrderDoesNotAdvanceWatermark) {
+    // Invalid price — rejected before the watermark update.
+    auto bad = engine.submit(NewOrder{owned_limit(9, Side::Buy, 0, 10,
+                                                  /*owner=*/1)});
+    ASSERT_EQ(bad.status, EngineResult::InvalidPrice);
+    // Same id, now valid.
+    auto good = engine.submit(NewOrder{owned_limit(9, Side::Buy, 100, 10,
+                                                   /*owner=*/1)});
+    EXPECT_EQ(good.status, EngineResult::Accepted);
+}
+
+// Bound demonstration: the research report's 200,000 add+cancel-cycle
+// shape. One client cycles a monotonically-increasing id 200k times; the
+// book never holds more than one order, and — crucially — the tracking
+// structure stays size 1, NOT 200,000. The old ever_seen_ids_ set would
+// have grown to 200,000 entries here.
+TEST(MatchingEngineWatermarkStress, StructureStaysBoundedOver200kCycles) {
+    RecordingEventSink sink;
+    MatchingEngine engine{&sink};
+
+    constexpr uint64_t kCycles = 200'000;
+    for (uint64_t i = 1; i <= kCycles; ++i) {
+        LimitOrder o{OrderId{i}, Side::Buy, Price{100}, Quantity{1}};
+        o.owner = ClientId{1};
+        auto resp = engine.submit(NewOrder{o});
+        ASSERT_EQ(resp.status, EngineResult::Accepted) << "cycle " << i;
+        auto cxl = engine.cancel(OrderId{i});
+        ASSERT_EQ(cxl.status, EngineResult::Accepted) << "cycle " << i;
+    }
+
+    EXPECT_EQ(engine.book().order_count(), 0u);
+    // The whole point of R7: bounded by client count (1), not cycles.
+    EXPECT_EQ(engine.tracked_client_count(), 1u);
+
+    // Two more clients doing the same → still exactly 3, not 600k.
+    for (uint64_t i = 1; i <= 1000; ++i) {
+        for (uint64_t client : {2u, 3u}) {
+            LimitOrder o{OrderId{i}, Side::Buy, Price{100}, Quantity{1}};
+            o.owner = ClientId{client};
+            ASSERT_EQ(engine.submit(NewOrder{o}).status,
+                      EngineResult::Accepted);
+            engine.cancel(OrderId{i});
+        }
+    }
+    EXPECT_EQ(engine.tracked_client_count(), 3u);
+}
+
+// ===========================================================================
+// Phase 11 T8 (R8) — self-trade prevention is O(1) in book depth.
+//
+// All Phase 8 STP behaviour tests (SameOwnerCrossRejected...,
+// DifferentOwnerCrossProceeds, StpDisabled..., CancelResting ordering)
+// still pass unmodified — this task changed cost, not behaviour. The
+// tests below add: (a) a correctness check at large depth, and (b) the
+// research report's depth-1/10/100/1000 shape, asserting the per-call
+// cost no longer scales with depth.
+// ===========================================================================
+
+// Build a RejectIncoming-STP engine with an ask book `depth` levels deep,
+// all owned by `other`, plus ONE resting ask owned by `self` at the
+// highest (deepest to cross) price. Returns that deepest price.
+static Price build_deep_ask_book(MatchingEngine& engine, int depth,
+                                 uint64_t self_owner, uint64_t other_owner) {
+    uint64_t id = 1;
+    for (int i = 0; i < depth; ++i) {
+        LimitOrder o{OrderId{id++}, Side::Sell,
+                     Price{1000 + i}, Quantity{1}};
+        o.owner = ClientId{other_owner};
+        engine.submit(NewOrder{o});
+    }
+    const Price deep{1000 + depth};
+    LimitOrder mine{OrderId{id++}, Side::Sell, deep, Quantity{1}};
+    mine.owner = ClientId{self_owner};
+    engine.submit(NewOrder{mine});
+    return deep;
+}
+
+TEST(StpDepthTest, CorrectAtLargeDepth) {
+    RecordingEventSink sink;
+    MatchingEngine engine{&sink, 100'000,
+                          StpConfig{true, StpPolicy::RejectIncoming}};
+    const Price deep =
+        build_deep_ask_book(engine, 2000, /*self=*/1, /*other=*/2);
+
+    // A client-1 buy that reaches its own deep resting ask self-crosses,
+    // even though 2000 other-owned levels sit in front of it.
+    LimitOrder cross{OrderId{999999}, Side::Buy, deep, Quantity{1}};
+    cross.owner = ClientId{1};
+    EXPECT_EQ(engine.submit(NewOrder{cross}).status,
+              EngineResult::SelfTradePrevented);
+
+    // A client-1 buy priced below its own ask does NOT self-cross.
+    LimitOrder below{OrderId{999998}, Side::Buy, Price{deep.value - 1},
+                     Quantity{1}};
+    below.owner = ClientId{1};
+    EXPECT_NE(engine.submit(NewOrder{below}).status,
+              EngineResult::SelfTradePrevented);
+
+    // A client-3 buy at the deep price crosses (trades) — client 3 has
+    // nothing resting; STP is per client.
+    LimitOrder other_buy{OrderId{1}, Side::Buy, deep, Quantity{1}};
+    other_buy.owner = ClientId{3};
+    EXPECT_EQ(engine.submit(NewOrder{other_buy}).status,
+              EngineResult::Accepted);
+}
+
+TEST(StpDepthTest, CostDoesNotScaleWithDepth) {
+    auto time_rejects_at_depth = [](int depth) -> double {
+        RecordingEventSink sink;
+        MatchingEngine engine{&sink, 2'000'000,
+                              StpConfig{true, StpPolicy::RejectIncoming}};
+        const Price deep =
+            build_deep_ask_book(engine, depth, /*self=*/1, /*other=*/2);
+
+        // Reused id: every probe is STP-rejected before the watermark
+        // update, so client 1's watermark never advances and the id
+        // stays valid to resubmit.
+        LimitOrder probe{OrderId{900000}, Side::Buy, deep, Quantity{1}};
+        probe.owner = ClientId{1};
+        const NewOrder order{probe};
+
+        constexpr int kIters = 200'000;
+        for (int i = 0; i < 1000; ++i) {  // warm-up
+            EXPECT_EQ(engine.submit(order).status,
+                      EngineResult::SelfTradePrevented);
+        }
+        auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < kIters; ++i) {
+            EXPECT_EQ(engine.submit(order).status,
+                      EngineResult::SelfTradePrevented);
+        }
+        auto t1 = std::chrono::steady_clock::now();
+        return std::chrono::duration<double, std::nano>(t1 - t0).count() /
+               kIters;
+    };
+
+    const double d1 = time_rejects_at_depth(1);
+    const double d10 = time_rejects_at_depth(10);
+    const double d100 = time_rejects_at_depth(100);
+    const double d1000 = time_rejects_at_depth(1000);
+
+    std::printf(
+        "[StpDepthTest] ns/reject: depth1=%.1f depth10=%.1f depth100=%.1f "
+        "depth1000=%.1f  ratio(1000/1)=%.2fx\n",
+        d1, d10, d100, d1000, d1000 / d1);
+
+    // O(depth) would make this ratio ~1000x. O(1) keeps it near 1x;
+    // allow generous slack for an unpinned box and the map constant
+    // factor — but nowhere near linear in depth.
+    EXPECT_LT(d1000 / d1, 8.0)
+        << "STP cost still scales with book depth (d1=" << d1
+        << "ns, d1000=" << d1000 << "ns)";
 }
 
 }  // namespace

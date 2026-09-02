@@ -117,7 +117,11 @@ struct AckMsg {
 //   3 = InvalidQuantity
 //   4 = InvalidPrice
 //   5 = PoolExhausted
-//   6 = ParseError (protocol-level, no engine round-trip)
+//   6 = ParseError (protocol-level, no engine round-trip) / SelfTradePrevented
+//   7 = PriceOutOfBand      (Phase 8)
+//   8 = QuantityTooLarge    (Phase 8)
+//   9 = TickSizeMisaligned  (Phase 8)
+//  10 = InternalError       (Phase 11 R3 — engine dispatch threw)
 struct RejectMsg {
     MessageType type = MessageType::Reject;
     uint8_t     reason_code;

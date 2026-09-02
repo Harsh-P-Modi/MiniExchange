@@ -14,8 +14,11 @@ namespace miniexchange {
 // result code without unpacking the entire response struct.
 enum class EngineResult {
     Accepted,          // order accepted (may have filled, partially or fully)
-    DuplicateOrderId,  // ADD with an OrderId ever previously accepted
-                       // (lifetime-unique per requirements.md §2.1)
+    DuplicateOrderId,  // ADD with an OrderId at or below this client's
+                       // highest previously-accepted id. Phase 11 R7
+                       // narrowed this from global-lifetime uniqueness to
+                       // per-client monotonic uniqueness; the result code
+                       // (this value) is unchanged (requirements.md §7).
     UnknownOrderId,    // CANCEL referencing an OrderId not currently resting
     InvalidQuantity,   // qty == 0
     InvalidPrice,      // price <= 0 (limit orders only; market orders
@@ -34,6 +37,16 @@ enum class EngineResult {
     PriceOutOfBand,      // R2 — price deviates beyond the configured band
     QuantityTooLarge,    // R3 — quantity exceeds the fat-finger ceiling
     TickSizeMisaligned,  // R4 — price is not a multiple of the tick size
+
+    // Phase 11 R3 — NOT a business outcome. Reported when engine dispatch
+    // on the gateway's engine thread throws: the exception is caught at
+    // the loop boundary (see apps/exchange_server/engine_loop.hpp), the
+    // one client whose command triggered it gets this result, and the
+    // venue keeps running for everyone else instead of std::terminate-ing.
+    // In a correct build this is never produced; it exists so a genuine
+    // bug degrades to "one bad response" rather than "whole process dies".
+    // Named after the reason, un-prefixed, matching the convention above.
+    InternalError,
 };
 
 // EngineResponse — the synchronous return value from EngineAPI::submit
@@ -63,6 +76,18 @@ struct EngineResponse {
                                 // non-zero if partially filled and resting
                                 // (limit orders) or if unfilled and
                                 // discarded (market orders per R10)
+
+    // Phase 11 R2: the OrderId this response answers. Set at every return
+    // point in MatchingEngine::submit_limit / submit_market / cancel (and
+    // on the RiskEngine pre-trade rejection path) — for the accept path,
+    // every rejection path, and cancels alike. Lets a client with more
+    // than one order in flight correlate a response to the request that
+    // produced it, and lets the gateway codecs render the real id instead
+    // of the OrderId{0} placeholder they were previously forced to
+    // synthesize. Default-initialized to OrderId{0} so pre-existing
+    // aggregate initializers that pass only {status, trades, remaining_qty}
+    // still compile (the field is value-initialized).
+    OrderId order_id{};
 };
 
 // OrderAccepted — EventSink::on_order_accepted payload. Emitted exactly

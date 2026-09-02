@@ -109,6 +109,15 @@ std::string FixEncoder::encode_execution_report(const ExecReportContext& ctx,
     const char ord_status =
         ord_status_for(response, ctx.original_qty, ctx.is_cancel);
 
+    // Phase 11 R2: the binary/text gateway codecs previously had to
+    // synthesize a placeholder id because EngineResponse did not carry
+    // one. The FIX path never had that problem — FixSession builds
+    // ExecReportContext from the *parsed* order, so ctx.order_id is
+    // already the real client-supplied id on every path (accept, reject,
+    // cancel). EngineResponse::order_id (added in R2) now agrees with it;
+    // ctx stays the source here because it is also correct for a reject
+    // that never reached the engine at all (e.g. an unsupported symbol
+    // caught in the session layer).
     append_field(body, 37, ctx.order_id.value);       // OrderID
     append_field(body, 11, ctx.order_id.value);       // ClOrdID (== OrderID, Q1)
     append_field(body, 17, next_exec_id_++);          // ExecID

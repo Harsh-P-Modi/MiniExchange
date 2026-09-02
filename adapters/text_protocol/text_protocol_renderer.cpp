@@ -6,6 +6,16 @@ namespace miniexchange::text_protocol {
 
 namespace {
 
+// Phase 11 R2: tag both ACCEPTED and REJECTED lines with the OrderId the
+// response answers, so a client that pipelines several orders can
+// correlate each reply to its request. Additive to the plaintext debug
+// format — existing substring checks for "ACCEPTED" / "REJECTED" are
+// unaffected. `id=0` means the engine could not attribute the response
+// to a specific order (should not happen post-Phase-11 for submit/cancel).
+std::string id_tag(const EngineResponse& response) {
+    return " id=" + std::to_string(response.order_id.value);
+}
+
 const char* result_to_string(EngineResult result) {
     switch (result) {
         case EngineResult::Accepted:
@@ -28,6 +38,8 @@ const char* result_to_string(EngineResult result) {
             return "QuantityTooLarge";
         case EngineResult::TickSizeMisaligned:
             return "TickSizeMisaligned";
+        case EngineResult::InternalError:
+            return "InternalError";
     }
     return "Unknown";
 }
@@ -36,14 +48,18 @@ const char* result_to_string(EngineResult result) {
 
 std::string render(const EngineResponse& response) {
     if (response.status != EngineResult::Accepted) {
-        std::string out = "REJECTED: ";
+        std::string out = "REJECTED";
+        out += id_tag(response);
+        out += ": ";
         out += result_to_string(response.status);
         out += '\n';
         return out;
     }
 
     // Accepted — render fills if any occurred.
-    std::string out = "ACCEPTED:";
+    std::string out = "ACCEPTED";
+    out += id_tag(response);
+    out += ":";
 
     if (response.trades.empty()) {
         out += " no fills, remaining_qty=";

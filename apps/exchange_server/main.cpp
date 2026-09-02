@@ -38,9 +38,11 @@
 
 #include "adapters/tcp/framing.hpp"
 #include "adapters/tcp/tcp_server.hpp"
+#include "apps/exchange_server/engine_loop.hpp"
 #include "adapters/binary_protocol/GatewayCodec.hpp"
 #include "adapters/text_protocol/text_protocol_parser.hpp"
 #include "adapters/text_protocol/text_protocol_renderer.hpp"
+#include "adapters/udp/queued_event_sink.hpp"
 #include "adapters/udp/udp_feed_publisher.hpp"
 #include "core/EngineCommand.hpp"
 #include "core/TaggedCommand.hpp"
@@ -161,6 +163,22 @@ int main(int argc, char* argv[]) {
     miniexchange::udp::UdpFeedPublisher feed_publisher(
         kSymbol, {sub}, udp_fd, 500 /* snapshot every 500 messages */);
 
+    // --- Phase 11 R5: decouple feed publication from the match call stack ---
+    // The engine is wired to QueuedEventSink, NOT to feed_publisher
+    // directly. QueuedEventSink::on_trade/on_order_* just copy a POD into
+    // an SPSC ring and return — no sendto() on the engine thread's stack.
+    // A dedicated thread owns feed_publisher and drains that ring,
+    // performing the actual UDP I/O from its own stack. If the ring
+    // fills, events are dropped and counted (queued_sink.dropped()) — a
+    // missed market-data tick is the right failure mode for a feed; the
+    // engine thread is never blocked on feed-queue space.
+    miniexchange::udp::QueuedEventSink<> queued_sink;
+    std::atomic<bool> feed_stop{false};
+    std::thread feed_thread([&queued_sink, &feed_publisher, &feed_stop]() {
+        miniexchange::udp::run_feed_publisher(queued_sink, feed_publisher,
+                                              feed_stop);
+    });
+
     // --- Construct engine + risk layer (Phase 8) ---
     // RiskConfig is the single composition-root risk configuration. Its
     // STP slice is passed down into the engine (STP executes inside the
@@ -175,7 +193,7 @@ int main(int argc, char* argv[]) {
     risk_config.stp_enabled = true;
     risk_config.stp_policy = StpPolicy::RejectIncoming;
 
-    MatchingEngine matching_engine(&feed_publisher, 1'000'000,
+    MatchingEngine matching_engine(&queued_sink, 1'000'000,
                                    risk_config.stp());
 
     // The decorator is the ONLY entry point the rest of the app uses.
@@ -212,9 +230,24 @@ int main(int argc, char* argv[]) {
                                               frame_message(err_msg));
                     } else {
                         // Valid command: push to inbound queue for engine.
-                        // Drop on full (R4 — bounded queue, no blocking).
+                        // Phase 11 R1: the inbound queue is bounded (no
+                        // blocking — Phase 5 R4), but a full queue must not
+                        // swallow the order silently. try_push returns false
+                        // when full; on that, respond directly from the I/O
+                        // thread using the same render/frame/send path the
+                        // ParseError branch above already uses. Routing this
+                        // rejection *through* the engine is impossible — the
+                        // queue it would travel on is the one that is full —
+                        // so the direct I/O-thread response is the only
+                        // option that does not depend on the exhausted
+                        // resource. See specs/phase-11-iteration/design.md §1.
                         TaggedCommand cmd{client_id, val};
-                        inbound.try_push(std::move(cmd));
+                        if (!inbound.try_push(std::move(cmd))) {
+                            auto err_msg = render_error_fn(
+                                "system busy — order not accepted");
+                            server.send_to_client(client_id,
+                                                  frame_message(err_msg));
+                        }
                     }
                 },
                 result);
@@ -248,9 +281,26 @@ int main(int argc, char* argv[]) {
     // --- Engine thread (main thread) ---
     // Spins on inbound queue, processes commands through the engine,
     // pushes responses to outbound queue, and notifies I/O thread.
+    //
+    // Phase 11 R6: the eventfd wakeup is coalesced. Instead of one
+    // ::write(g_eventfd) per response, WakeupCoalescer defers the write
+    // to the moment the inbound queue reads empty — one syscall per
+    // "drain until idle" cycle. The I/O thread's drain handler already
+    // empties the outbound queue in one call, so fewer wakeups flush the
+    // same responses; under light load the queue reads empty right after
+    // the single response, so the wakeup still fires with no added
+    // latency. See apps/exchange_server/engine_loop.hpp.
+    exchange_server::WakeupCoalescer wakeup;
     while (!g_shutdown.load(std::memory_order_relaxed)) {
         TaggedCommand cmd{};
         if (!inbound.try_pop(cmd)) {
+            // Inbound queue drained — issue the coalesced wakeup now if
+            // any response was pushed since the last one.
+            if (wakeup.should_notify_on_idle()) {
+                uint64_t val = 1;
+                [[maybe_unused]] auto _ =
+                    ::write(g_eventfd, &val, sizeof(val));
+            }
             // No work — yield to avoid pure busy-spin burning CPU.
             // A more aggressive approach (e.g. _mm_pause or spinning N
             // times before yielding) is a Phase 7+ optimization.
@@ -258,25 +308,12 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        // Dispatch to engine via std::visit on the EngineCommand variant.
-        // Phase 8: tag the order with the submitting connection's ClientId
-        // (cmd.client) before handing it to the engine, so the resting
-        // order records its owner for self-trade prevention (R5). Before
-        // this, cmd.client was only used for response routing and the
-        // engine never saw who submitted an order.
-        EngineResponse resp = std::visit(
-            [&engine, &cmd](auto& command) -> EngineResponse {
-                using T = std::decay_t<decltype(command)>;
-                if constexpr (std::is_same_v<T, LimitOrder> ||
-                              std::is_same_v<T, MarketOrder>) {
-                    command.owner = cmd.client;
-                    return engine.submit(command);
-                } else {
-                    static_assert(std::is_same_v<T, CancelRequest>);
-                    return engine.cancel(command.id);
-                }
-            },
-            cmd.command);
+        // Dispatch to engine (Phase 8: stamps cmd.client as the order's
+        // owner for STP; Phase 11 R3: catches any throw out of engine
+        // dispatch at this boundary and degrades it to an InternalError
+        // response instead of terminating the process). See
+        // apps/exchange_server/engine_loop.hpp.
+        EngineResponse resp = exchange_server::dispatch_command(engine, cmd);
 
         // Push response to outbound queue. R8: spin-retry on full —
         // the engine must never discard a response (unlike inbound,
@@ -293,7 +330,17 @@ int main(int argc, char* argv[]) {
         }
         outbound.try_push(std::move(tagged));  // guaranteed to succeed
 
-        // Notify I/O thread that a response is available.
+        // Phase 11 R6: record that a response is pending, but DON'T write
+        // the eventfd here. The write is issued once, above, when the
+        // inbound queue next reads empty — coalescing a burst of
+        // responses into a single I/O-thread wakeup.
+        wakeup.note_response();
+    }
+
+    // A response may have been pushed on the final iteration before the
+    // shutdown flag was observed; make sure the I/O thread is woken to
+    // flush it (it also needs waking to see request_shutdown()).
+    if (wakeup.should_notify_on_idle()) {
         uint64_t val = 1;
         [[maybe_unused]] auto _ = ::write(g_eventfd, &val, sizeof(val));
     }
@@ -303,6 +350,13 @@ int main(int argc, char* argv[]) {
     // eventfd write from the signal handler yet).
     server.request_shutdown();
     io_thread.join();
+
+    // Stop the feed-publisher thread. run_feed_publisher does one final
+    // drain after observing the stop flag, so any events queued between
+    // the last engine command and here are still published before the
+    // UDP socket is closed.
+    feed_stop.store(true, std::memory_order_relaxed);
+    feed_thread.join();
 
     ::close(g_eventfd);
     g_eventfd = -1;

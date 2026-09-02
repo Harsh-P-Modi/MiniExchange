@@ -6370,3 +6370,1568 @@ Phase 8's `Order`-size benchmark (see `benchmarks/results/`), since
 laptop-under-load numbers here would be noise. The generator that R5
 needs exists and is verified to produce flow; the recorded comparison is
 what waits on the pinned machine.
+
+## Phase 11 — Iteration: Research & Findings
+
+Phase 11 is different from every phase before it. Phases 1–10 each
+*built* something. Phase 11's spec (`specs/phase-11-iteration/`) instead
+*remediates* the finished system, and its tasks come from two research
+documents produced after Phase 10 shipped, not from a fresh feature
+requirement. This section documents those two documents themselves —
+what they found, how they were produced, and (just as important) how
+the second document tore into the first one — because the *process* is
+as much the lesson here as any individual finding.
+
+This section is written before Phase 11's tasks are implemented. Once
+T1–T11 land, each task still gets its own entry below, in the normal
+per-task style — this section is the research context those entries
+will build on, not a replacement for them.
+
+### Why two documents, not one
+
+**What happened:** the first document ("the research report") is a
+24-section teardown: read every hot-path source file, write three
+instrumented C++ probes that link against the *real* `MatchingEngine`,
+`RiskEngine`, and `SpscRingBuffer` (not toy reimplementations), measure
+what they actually cost, and cross-reference against external HFT
+literature. The second document ("the adversarial review") is a
+deliberate hostile re-read of the first one, written specifically to
+find every claim in it that wouldn't survive a skeptical senior
+engineer's questioning.
+
+**Why this two-pass structure, specifically:** a single research pass
+has a structural blind spot — the same reasoning that produced a claim
+is the reasoning that would have to notice the claim is weak, and it
+usually doesn't, because you don't go looking for reasons to doubt your
+own conclusions while you're still building them. A second, explicitly
+adversarial pass — done *after* the first is "finished," with the goal
+of attacking rather than extending it — catches a different class of
+error: not "did I miss a bottleneck" but "did I overstate one I found,"
+"did I measure noise and call it a signal," "did two of my own
+recommendations quietly contradict each other." Both classes of error
+are real, and only the second pass catches the second class.
+
+**Connects to:** this mirrors why Phase 8's `design.md` has an explicit
+"why not X" section for STP placement, and why every phase's
+`requirements.md` has a "Resolved Open Questions" section rather than
+silently picking an answer — this project has a running habit of
+writing down the road not taken, not just the road taken. The
+adversarial review is that habit applied to an entire report instead of
+a single design decision.
+
+**Check your understanding:** if you only had time to do one of the two
+passes, which class of error would you be accepting the risk of, and
+why does that matter more for a latency report specifically than it
+would for, say, a correctness bug report?
+
+---
+
+### Finding 1 — the framing correction: this project is a venue, not a strategy
+
+**What it does (plain language):** before any bottleneck analysis, the
+research report makes a scope correction: the standard HFT phrase
+"tick-to-trade latency" describes a *strategy's* path (market data in →
+decision → order out). MiniExchange sits on the *other* side of that
+wire — it has a matching engine, an order gateway, and a market-data
+publisher. Phase 10's strategies exist, but they're explicitly toys
+(design.md for that phase says as much). So the metric that actually
+describes this project's hot path is **order-to-ack** (gateway ingress
+to response egress) and **order-to-feed** (order arrival to market-data
+publication) — not tick-to-trade.
+
+**Why this matters beyond terminology:** getting the metric wrong would
+have pointed the rest of the analysis at the wrong target. A
+tick-to-trade analysis would obsess over market-data *parsing* speed
+(this project barely has an external feed to parse) and strategy
+*decision* latency (Phase 10's strategies are deliberately naive, by
+that phase's own R3). An order-to-ack analysis instead correctly centers
+on the TCP gateway → engine → response path, which is where this
+project's actual complexity lives.
+
+**Connects to:** Phase 5 (TCP gateway), Phase 6 (UDP feed) — these two
+phases *are* the two metrics. Everything downstream in the report
+follows from correctly identifying them as the object of study.
+
+---
+
+### Finding 2 — the engine performs I/O, through the exact port built to prevent it
+
+**What it does (plain language):** `.kiro/steering/tech.md`'s hardest
+rule is "the engine performs zero I/O" — no printf, no sockets, nowhere
+in `core/`, `orderbook/`, or `engine/`. That rule is enforced at the
+*type* level: `EventSink` is a port (interface), and `MatchingEngine`
+only ever calls through it (`sink_->on_trade(...)`,
+`engine/matching_engine.cpp:260`, and the accept/cancel callbacks at
+`:94, :147, :223`). The engine's source code genuinely contains no
+socket call.
+
+But in the production composition root (`apps/exchange_server/main.cpp`),
+the concrete object wired in behind that `EventSink*` is
+`UdpFeedPublisher` (Phase 6), whose `on_trade`/`on_order_accepted`/
+`on_order_cancelled` handlers call `::sendto()`. Because
+`match_against_book` calls `sink_->on_trade(trade)` *synchronously,
+inside its own loop*, an order that fills against five resting orders
+drives roughly five blocking `sendto()` calls **on the engine's own
+call stack**, before `submit()` ever returns to its caller.
+
+**Why the type system didn't catch this:** `EventSink` constrains what
+the engine can be *coupled to* (it can't name `UdpFeedPublisher`,
+`sendto`, or `<sys/socket.h>` — a real, valuable guarantee). It says
+nothing about what the engine can be made to *wait on*, because C++
+interfaces don't carry a cost contract, only a type contract. A method
+signature like `void on_trade(const Trade&)` looks identical whether the
+implementation increments a counter (nanoseconds) or blocks on a
+syscall (microseconds) — the compiler enforces the former's type, never
+its performance character.
+
+**Complexity:** roughly 5–10 syscalls introduced per order that fills
+multiple resting orders, versus ~300 ns of actual matching work for the
+same order (measured — see Finding 5). This is the single largest
+contributor identified in either report.
+
+**Connects to:** Phase 1's zero-I/O rule (the rule this finding shows
+is violated in *practice*, not in *source text*); Phase 6's
+`UdpFeedPublisher` (the concrete adapter responsible, itself unchanged
+and blameless — it's *where* it's called from, not *what* it does, that's
+the defect); this is exactly what Phase 11's R5/design.md §5
+(`QueuedEventSink` + a dedicated feed-publisher thread) exists to fix —
+see that task's own entry once implemented for how the fix works.
+
+**Check your understanding:** if `EventSink::on_trade` had been
+documented (not just implemented) with an explicit "must be wait-free,
+must not perform I/O" contract from Phase 6 onward, at what point would
+this defect have become visible — code review, compile time, or only at
+measurement time the way it actually was found?
+
+---
+
+### Finding 3 — self-trade prevention's cost is decoupled from the order's own size
+
+**What it does (plain language):** Phase 8's `design.md` §5 argues, at
+length, that STP has to live inside `MatchingEngine`'s match loop rather
+than the `RiskEngine` decorator, because a decorator would have to
+re-walk the crossable side of the book just to find out whether the
+incoming order would cross a same-owner resting order — an O(depth)
+scan the decorator doesn't otherwise need to do. That argument is sound.
+
+What the research report's probe found is that the *engine's own*
+`would_self_cross` (`engine/matching_engine.cpp:285`), used by the
+`RejectIncoming` policy as a pre-scan before any mutation, **is that
+same O(depth) scan** — Phase 8 correctly diagnosed why the check has to
+run inside the engine, and then implemented the in-engine version with
+the same asymptotic cost the decorator version would have had. Measured
+against the real engine: median `submit()` latency at book depth 1000
+is **15,700 ns vs. 300 ns at depth 1**, a 52× regression, with a
+worst-case observed at 22.7 ms.
+
+**The adversarial review's correction (worth learning from directly):**
+the first report presented "52× at depth 1000" as if it were the
+typical cost of STP. Re-reading `would_self_cross`, it breaks out of its
+level loop the moment a level is no longer crossable — so its cost is
+really O(*crossable* levels), not O(*book* depth); a resting,
+non-crossing order pays almost nothing. The 52× number came from a probe
+*deliberately* priced to cross all 1000 levels. That's not a
+mischaracterization of the mechanism, but it does overstate how often
+that worst case is hit in practice.
+
+The sharper, defensible version — which the adversarial pass surfaced —
+is actually more interesting: the test order in that probe had
+`Quantity{1}`, so it filled from the very first level and stopped
+matching. **The scan walked all 1000 levels to authorize an order that
+only ever touched one.** The real defect isn't "STP is O(depth)" in the
+abstract — every STP implementation that has to guarantee
+zero-side-effects-before-rejection is going to cost *something*
+proportional to the region it must inspect. The real defect is that the
+region it inspects (everything crossable) is **decoupled from** the
+region the order actually needs (however much of the book fills it).
+An aggressively-priced one-lot order pays for the whole book's depth
+of self-trade risk it was never actually exposed to beyond its own fill.
+
+**Complexity, before/after (Phase 11 R8):** today, O(crossable levels ×
+orders per level) worst case. The fix (a per-client best-resting-price
+index, updated incrementally on the O(1) insert/remove `OrderBook`
+already performs) makes the check O(1) regardless of depth — a lookup
+and a price comparison, replacing a walk.
+
+**Connects to:** Phase 8's `design.md` §5 in full — this finding doesn't
+overturn that section's conclusion (STP still belongs in the engine, for
+all three of its original reasons: duplication, cost, and
+mutation-ordering), it identifies that the *implementation* of the
+in-engine check didn't have to inherit the cost profile the decorator
+version was rejected for. Phase 11's design.md §8 is explicit that this
+doesn't reopen Phase 8's placement argument — only the internals of
+`would_self_cross` change.
+
+**Check your understanding:** why does making the check O(1) *not*
+require moving STP back out to the decorator — i.e. which of Phase 8's
+three original reasons for placing STP inside the engine survive
+unchanged even after the cost problem is fixed?
+
+---
+
+### Finding 4 — `ever_seen_ids_` trades a real requirement for unbounded memory
+
+**What it does (plain language):** Phase 1's requirements.md §2.1
+requires lifetime-unique `OrderId`s — once accepted, an ID can never be
+reused, even after the order is fully cancelled or filled. The
+implementation (`std::unordered_set<OrderId> ever_seen_ids_`,
+`engine/matching_engine.hpp:51`) satisfies this exactly as specified:
+every accepted ID goes in and never comes out. The requirement is
+correct; the chosen data structure is the literal, unbounded
+implementation of it.
+
+**Measured cost:** 200,000 add-then-cancel cycles, with the book
+returning to *empty* after every cycle (so no resting state should be
+growing), retain 200,002 allocations and 26.64 MB — **139.7 bytes
+retained per order, forever, for the life of the process.** At a modest
+10M orders/day this is roughly 1.4 GB/day of monotonic growth; the
+process eventually OOMs, and `unordered_set` rehashing injects
+unpredictable latency spikes into the hot path along the way, on top of
+the steady-state cost.
+
+**Why this is a genuinely interesting example (not just a bug):** it's
+a case where the *requirement* was interpreted with total fidelity and
+the *implementation* was still wrong for production use, because
+"literally remember every ID forever" and "guarantee no ID is ever
+reused" are not actually the same requirement — the second can be
+satisfied by a much smaller structure than the first. Phase 11's R7
+replaces global lifetime-uniqueness with **per-client monotonic
+uniqueness** (each client's own IDs must strictly increase; different
+clients may reuse the same numeric ID) — a `std::unordered_map<ClientId,
+OrderId>` tracking one high-water mark per client, bounded by
+concurrent-client count rather than by total orders ever submitted.
+This is a genuine, deliberate narrowing of the original guarantee, not
+a bug fix that happens to also change nothing observable — see
+`requirements.md` §7 in Phase 11's spec for why that's called out
+explicitly rather than buried in a diff.
+
+**Complexity:** before, O(n) space in total orders ever accepted,
+unbounded. After, O(k) space in concurrent distinct clients, and O(1)
+per check either way (a hash lookup) — the fix isn't about per-operation
+speed, it's about what the structure retains.
+
+**Connects to:** Phase 1 §2.1 (the original requirement this
+implements); Phase 8's `ClientId` retrofit (this fix depends on
+`order.owner` being populated, which Phase 8 already guarantees for
+every submitted order — Phase 11 doesn't need a new retrofit, only a
+new use of data Phase 8 already threads through).
+
+**Check your understanding:** the adversarial review considered two
+other fixes — a bounded ring plus a Bloom filter (keeps the *original*
+global-uniqueness semantic, at the cost of a small false-positive
+rejection rate and a more complex structure), and session-scoped IDs
+(resets on reconnect, but requires session-lifecycle machinery this
+project doesn't have yet). Why does the per-client watermark need
+neither of those two costs, and what does it give up in exchange?
+
+---
+
+### Finding 5 — "zero heap allocation in steady state" was true of one allocation site out of four
+
+**What it does (plain language):** Phase 3 built `OrderPool` specifically
+to remove the `Order` allocation from the hot path — order data lives
+in pre-allocated slab storage, acquired and released via an intrusive
+free list, no `new`/`delete` per order. That work is real and correctly
+done. But `Order` was never the *only* thing the hot path allocates.
+
+**Measured, per operation, against the real engine:**
+
+| Operation | Allocations | Bytes |
+|---|---|---|
+| ADD, rests on existing level | 2 | 40 |
+| ADD, rests on a new price level | 3 | 112 |
+| CANCEL | 0 | 0 |
+| ADD, one fill | 2 | 64 |
+| ADD, ten fills | 6 | 1,504 |
+
+The three remaining sources: the `unordered_map<OrderId, Order*>` node
+in the order index, the `unordered_set<OrderId>` node in
+`ever_seen_ids_` (Finding 4), and the `std::map<Price, PriceLevel>` node
+whenever an order opens a brand-new price level. The ten-fill case shows
+`std::vector<Trade>` growing geometrically (1→2→4→8→16 capacity) as
+`EngineResponse::trades` fills up during a matching pass.
+
+**Why this matters even though each allocation is small:** the point
+isn't that 2–6 allocations at ~100 ns each is itself the dominant cost
+(it isn't — see Finding 6 below for what actually dominates). The point
+is a documentation/claim-accuracy one: `OrderPool` fixed the allocation
+that was *named* in the README's "zero allocation" claim, and that
+claim generalized past what was actually verified. This is worth
+internalizing as a general habit: "we removed the allocation" and "there
+are no more allocations" are different claims, and only the second one
+needs a systematic audit (grep for every `new`/container-that-allocates
+on the path) to actually support.
+
+**Connects to:** Phase 3 (`OrderPool`, the one site that *is* fixed);
+this is filed as a candidate for a *future* phase in Phase 11's
+`requirements.md` §5 Q4 (deferred, not included in Phase 11 itself,
+because relative to the syscall removal work it's a small, secondary-order
+win — see Finding 6 for the comparison that justifies deprioritizing it).
+
+**Check your understanding:** why does `CANCEL` show zero allocations
+while `ADD` always shows at least two, even when the ADD doesn't open a
+new price level or produce any fills?
+
+---
+
+### Finding 6 — the response payload owns a heap container across a thread boundary
+
+**What it does (plain language):** `TaggedResponse`
+(`core/TaggedCommand.hpp`) carries an `EngineResponse` by value from the
+engine thread to the I/O thread through the outbound SPSC ring. That
+`EngineResponse` contains `std::vector<Trade> trades` — an owning heap
+container, allocated on the engine thread (when trades occur) and freed
+on the I/O thread once that response is drained and rendered. This is a
+**cross-thread free**: the allocating thread and the freeing thread are
+different, which some allocators (including glibc's arena-based malloc)
+handle with extra locking/arena-migration cost compared to a same-thread
+alloc/free pair.
+
+**Measured, through the real `SpscRingBuffer`, 3 trades per response:**
+a flat, ownership-free POD payload (inline `Trade[4]` array, no heap)
+moves at 196 ns/msg; the actual `TaggedResponse` (carrying the vector)
+moves at 782 ns/msg — a **4× penalty, roughly 586 ns per response**,
+purely from the ownership decision, independent of how many trades are
+actually in it.
+
+**Why this is filed as deferred rather than urgent (Phase 11
+`requirements.md` §5 Q4):** 586 ns is real, but the adversarial review's
+point stands — relative to the ~10 syscalls per filled order Finding 2
+identifies (each individually costing more than this entire 586 ns
+delta), flattening this payload is a secondary-order win, and it's a
+*wide* change (touches every consumer of `EngineResponse`: both gateway
+codecs, the FIX adapter, every test that constructs one). Bundling a
+wide, comparatively small win into a phase whose actual argument is
+"delete the syscalls" would dilute the phase's focus without changing
+its outcome much. It's recorded here, with its measurement intact, as
+evidence for a future phase — not dropped, just sequenced correctly.
+
+**Connects to:** Phase 4 (`SpscRingBuffer`, the queue this was measured
+through); Phase 8 (`EngineResponse`'s shape, which Finding 5's Phase 11
+R2 also touches, by adding an `OrderId` field to the same struct — a
+reminder that a future "flatten to POD" pass and Phase 11's R2 will
+collide on the same type and should be sequenced with that in mind).
+
+**Check your understanding:** why does a *same-thread* alloc/free pair
+for the same `std::vector<Trade>` not pay this same penalty, and what
+does that imply about whether this cost is really about "allocation" in
+general or specifically about "allocation across a thread boundary"?
+
+---
+
+### Finding 7 — the SPSC queue reloads the cache line the *other* thread owns, every operation
+
+**What it does (plain language):** `SpscRingBuffer::try_push`
+(`lockfree_queue/spsc_ring_buffer.hpp`) acquire-loads `head_` on every
+single call — and `head_` is the index the *consumer* thread writes.
+Symmetrically, `try_pop` acquire-loads `tail_`, which the *producer*
+writes. Every push therefore has a chance of observing a cache line
+that was just invalidated by the other thread's last write to it, and
+vice versa for every pop — this is textbook cross-core cache-coherency
+traffic, on the queue's *own* correctness-critical indices (not false
+sharing between unrelated data — this is contention on the very values
+the algorithm needs to synchronize on).
+
+**The fix (measured, Rigtorp's SPSCQueue technique):** each side caches
+its *own* private copy of the opposite side's last-known value
+(`cached_head_` on the producer, `cached_tail_` on the consumer) and
+only pays the real acquire-load when that cached value says the queue
+*might* be full (producer) or empty (consumer) — i.e., only when a
+wrong answer would actually matter. Most of the time, the cached value
+already proves there's room (or data), and the expensive cross-core read
+is skipped entirely.
+
+**Measured, 5M × 56-byte messages, two independent runs:** 52.05 →
+16.19 ns/msg (68.9% faster) in one run, 47.30 → 28.47 ns/msg (39.8%
+faster) in the other — a real, repeatable **40–69% throughput
+improvement for roughly 20 lines of change** (two extra private member
+variables, two extra `if` checks).
+
+**Why this is also filed as deferred, not a Phase 11 task, despite the
+large percentage:** the percentage is large but the *absolute* number is
+small — the delta is roughly 20–36 ns per operation, which the
+adversarial review correctly points out is dwarfed by the microsecond-
+scale syscalls Finding 2 targets. A 69% improvement on a ~50 ns
+operation is still only tens of nanoseconds; a 100% improvement on a
+10-syscall path is tens of microseconds. Same lesson as Finding 6: real,
+cheap, worth doing eventually, wrong thing to bundle into a phase whose
+leverage comes from syscall removal.
+
+**Complexity:** unchanged Big-O (still O(1) amortized per operation) —
+this is a constant-factor win from reduced cache-coherency traffic, not
+an algorithmic change.
+
+**Connects to:** Phase 4 (`SpscRingBuffer`'s original design — the
+class's own header comments already correctly explain *why*
+acquire/release ordering is needed at all; this finding is about *how
+often* the acquire-load actually has to pay its real cost, which is a
+separate question from whether acquire/release is the right memory
+order in the first place — it still is).
+
+**Check your understanding:** why does caching `head_`/`tail_` locally
+not weaken the memory-safety guarantee the acquire/release pairing
+provides — i.e., why is it still correct for the producer to sometimes
+act on a *stale* cached value of `head_`, as long as it re-checks the
+real value before concluding the queue is full?
+
+---
+
+### Finding 8 — the adversarial review's methodology lesson: quantization, and "measured" isn't automatically trustworthy
+
+**What it does (plain language):** several of the first report's probe
+results were reported as measurements when they were actually below the
+timer's resolution floor. The dev environment's `steady_clock` has
+roughly 100 ns granularity. A few specific numbers from the first pass
+didn't survive scrutiny once that was accounted for:
+
+- The `std::map`-vs-flat-array price tree comparison read "~100 ns" for
+  *both* structures at depth ≤1000 — exactly one clock tick. A
+  measurement that can't resolve any difference smaller than 100 ns
+  cannot support a conclusion about which structure is faster when the
+  real difference is plausibly 20–80 ns. The *conclusion* ("don't
+  replace `std::map` yet") turned out to still be correct, but for a
+  different reason than originally stated — not because the measurement
+  proved it, but because a counting argument does: hundreds of
+  nanoseconds of difference, if it exists at all, doesn't matter inside
+  a path that (per Finding 2) already spends tens of *microseconds* on
+  syscalls.
+- The `RiskEngine`-wrapped-vs-bare-engine comparison returned the
+  wrapped version as *faster* than bare — a negative delta on an
+  operation that can only ever add work. That's not evidence the
+  decorator is free; it's evidence the harness couldn't resolve the
+  question at all, and reporting it as "indistinguishable" (which the
+  first report did) was honest but still let a noise result stand in as
+  if it were a finding.
+- The self-trade-prevention scaling numbers at book depth 10 and 100
+  (1.33× and 5.00× multipliers) come from 3-vs-4 and 3-vs-15 clock
+  ticks respectively — also noise. Only the depth-1000 result (300 ns →
+  15,700 ns) is safely above the quantization floor, which is why
+  Finding 3 above only cites that one.
+
+**The general lesson, worth internalizing beyond this project:** a
+number produced by an instrumented probe *feels* more rigorous than an
+estimate, because it came from running real code against real inputs.
+But a measurement below a timer's resolution floor is not more
+trustworthy than a back-of-envelope estimate — it's *less* trustworthy,
+because it carries false precision (a specific-looking number like
+"5.00×" that is actually just "15 ticks ÷ 3 ticks" dressed up as a
+ratio). The fix isn't "don't measure" — it's to check the measurement
+against the instrument's known resolution before trusting it, and to
+prefer metrics that aren't quantization-limited in the first place:
+**allocation counts** (Findings 4–5) and **aggregate throughput over
+millions of operations** (Findings 6–7, where total elapsed time ÷ N
+averages out single-sample timer noise) are both trustworthy in a way a
+single-operation median near 100 ns is not.
+
+**Connects to:** this is the same discipline `.kiro/steering/tech.md`'s
+"benchmark numbers vs baseline" rule is trying to enforce project-wide —
+Phase 11's `requirements.md` NFR2 explicitly requires re-measuring on
+real Linux hardware rather than citing these reports' own numbers as
+finished evidence, for exactly this reason.
+
+**Check your understanding:** of the two probe techniques used across
+both reports — single-operation `steady_clock` timestamps, and
+aggregate "N operations ÷ total elapsed time" throughput — which one
+would still be trustworthy on a *slower* clock with only millisecond
+resolution, and why does that make it the more robust technique to
+default to when you don't know your timer's actual resolution?
+
+---
+
+### Finding 9 — recommendations withdrawn by the adversarial pass, and why each one is cargo cult *for this project specifically*
+
+**What it does (plain language):** the adversarial review didn't just
+correct measurements — it re-examined every *recommendation* in the
+first report and asked, for each one, "does the argument for this
+actually depend on facts true of this project, or does it depend on
+facts true of HFT systems in general that don't happen to apply here?"
+Several real, legitimate techniques failed that test:
+
+- **io_uring** — genuinely reduces *syscall-boundary* cost, but does
+  **not** bypass the TCP/UDP stack traversal itself. Once Finding 2's
+  ~10 syscalls/order are removed, what's left is 2–3 syscalls against
+  10–30 µs of stack traversal io_uring doesn't touch — the technique
+  solves a problem (syscall-boundary overhead at high connection counts)
+  this project doesn't have at this scale.
+- **Onload / kernel-bypass NICs** — requires specific Solarflare-class
+  hardware. Recommending it without that hardware being available is
+  describing a different project's constraints, not this one's.
+- **Huge pages** — help when a large working set is scattered across
+  many pages and causes TLB pressure. Nobody had measured whether
+  that's actually true of the 72 MB order pool's *working set* (as
+  opposed to its *allocation size* — the pool's LIFO free list means hot
+  slots are reused quickly, which is a locality-*improving* property the
+  huge-pages argument never accounted for).
+- **The Disruptor pattern** — LMAX's ring genuinely lets many consumers
+  read one producer's stream. This project's actual future need (a
+  journal writer wanting the engine's *input* stream, a feed publisher
+  wanting the engine's *output* stream — two different streams) doesn't
+  match that shape. Adopting the named pattern would be solving a
+  differently-shaped problem than the one this project has.
+- **DPDK, FPGA feed handling, a custom allocator, SIMD in the match
+  loop** — each is a real, respected technique in HFT generally, and
+  each was rejected here on a *counting* argument specific to this
+  project's actual traffic scale and data-access pattern (see the
+  reports themselves for the detailed argument in each case) — not
+  because the technique is bad, but because the problem each one solves
+  isn't the problem this codebase, at this traffic volume, on this
+  hardware, actually has.
+
+**The general lesson:** "this is a real, respected technique used by
+serious systems" is necessary but not sufficient to justify adopting it
+— the second question, always, is "does the specific problem it solves
+exist *in this system*, at a scale where the fix matters more than its
+complexity cost." A recommendation can be entirely correct in the
+abstract and still be the wrong thing to build.
+
+**Connects to:** Phase 11's `requirements.md` §6 (Out of Scope table) —
+every item in that table is one of these withdrawn recommendations,
+with its one-line reason preserved so a future reader doesn't have to
+re-derive why it's absent, rather than silently missing from the plan.
+
+**Check your understanding:** pick one item from the list above and
+state, in one sentence, what *would* have to be true of this project
+for that technique to become justified — i.e., what's the actual
+threshold each one is waiting on?
+
+---
+
+### Finding 10 — the internal contradiction: two Tier-1 recommendations that undercut each other
+
+**What it does (plain language):** the first report recommended, as
+separate, independent, both-high-priority items: (a) pin both threads
+to isolated CPU cores and replace the engine's idle-loop
+`std::this_thread::yield()` with a tight `pause()`-based busy-spin, and
+(b) *investigate collapsing the two-thread architecture into one*,
+because the two-thread handoff (queue push, queue pop, eventfd write,
+epoll wake, scheduler dispatch) was estimated to cost 2–60 µs against
+~300 ns of actual matching work.
+
+The adversarial pass caught that these interact: recommendation (b)'s
+entire justification is the *scheduler-dispatch* portion of that 2–60 µs
+range. But recommendation (a), if actually implemented (isolated cores,
+busy-polling, no scheduler preemption), removes almost exactly that
+portion — once both threads are pinned and spinning, the remaining
+handoff cost is just the queue's own latency, on the order of tens of
+nanoseconds, not microseconds. **Implementing (a) removes most of the
+justification for investigating (b).** Presenting both as independent,
+equally-urgent Tier-1 items, without noticing they're not independent,
+is exactly the kind of error a second adversarial pass exists to catch
+— it isn't visible from inside the first report's own reasoning, because
+each recommendation was justified correctly *in isolation*; only
+reading them *together* exposes that one's premise erodes when the
+other is applied.
+
+**A related correction caught the same way:** the first report also
+claimed a slow TCP client could "stall matching venue-wide" via a full
+outbound queue. Re-reading the actual drain path
+(`adapters/tcp/tcp_server.cpp:404-414`, `send_to_client`) shows
+`EAGAIN` is handled by arming `EPOLLOUT` and returning — the data moves
+into that connection's own `write_buffer` and the drain loop doesn't
+block. The real bug in the neighborhood (an *unbounded* `write_buffer`
+that can grow forever for a slow reader — Phase 11's R4) is genuine; the
+specific "stalls the whole venue" claim about the *outbound engine
+queue* was not, and the second pass caught it by re-reading the code
+the first pass had summarized from memory rather than re-verifying.
+
+**Why this belongs in a learning document, not just a corrections
+list:** both of these are the same category of mistake — asserting an
+interaction between two parts of the system without tracing the actual
+call path between them. It's the systems-engineering analogue of a
+correctness bug: locally-plausible reasoning about two pieces of code
+that turns out to be wrong exactly at the seam where they meet. The fix
+in both cases was the same discipline: go re-read the actual code path,
+don't reason from a summary of it.
+
+**Connects to:** Phase 11's `requirements.md` §5 Q5, which explicitly
+defers the single-thread-vs-two-thread question rather than picking an
+answer under this now-visible interaction, and Phase 11's R4
+(bounded write buffer), which is the corrected, narrower version of the
+"unbounded buffer" defect that survives once the overstated "stalls
+matching" framing is removed.
+
+**Check your understanding:** why couldn't the first report's own
+internal review have caught this contradiction — i.e., what would it
+have taken, structurally, for the *same* pass that generated both
+recommendations to also notice they interact, and why is that hard to
+do without treating the finished draft as an adversarial target
+afterward?
+
+---
+
+### What actually survived, and how that shaped Phase 11's scope
+
+Of the roughly forty recommendations across both reports, Phase 11's
+`requirements.md` (R1–R9) keeps thirteen — the ones whose *mechanism*
+is certain from reading the shipped code (not inferred from an estimate)
+and whose *magnitude*, where claimed at all, comes from a measurement
+that isn't quantization-limited (an allocation count, an aggregate
+throughput figure — never a single-operation median near the ~100 ns
+timer floor). Everything else is in Phase 11's `requirements.md` §6
+(Out of Scope), each with its reason preserved, or explicitly deferred
+in §5's Resolved Open Questions to a future phase, rather than silently
+dropped.
+
+The single sentence that survived every round of attack, and the one
+this whole phase is actually built around: **an order that fills against
+several resting orders drives roughly ten syscalls before its response
+is even queued, against roughly 300 ns of real matching work — and that
+is a counting argument from the shipped source, not a benchmark claim
+that depends on trusting any specific measured number.** Phase 11's R5
+and R6 exist to remove that gap; R9 exists to prove, on real hardware
+with a real syscall trace, that they did.
+
+**Check your understanding:** why is "an order crossing five levels
+issues ~10 syscalls" a *stronger* claim to build a phase around than
+"the matching engine is 1–2% of end-to-end latency" — even though both
+appear in the same research report, and even though the second one is,
+directionally, probably also true?
+
+---
+
+## Phase 11 — Iteration: Implementation (T1–T11)
+
+The research and adversarial passes above produced `requirements.md`
+R1–R9. This section documents the code that implements them, one
+subsection per task, in `tasks.md` order: correctness fixes first
+(T1–T4), then syscall removal (T5–T6), then the O(depth)/unbounded-state
+fixes (T7–T8), then verification (T9) and docs (T10–T11).
+
+A note on where these changes can be *built* and *run*. The matching
+engine, the order book, `core/`, the FIX adapter, the UDP feed adapter
+and the text-protocol codec all compile on any platform, so their tests
+(T2, T5's `QueuedEventSink` unit tests, T7, T8) run in the normal
+`ctest` suite. The TCP gateway (`adapters/tcp/`), the binary-protocol
+codec and the `exchange_server` composition root are gated behind
+`if(UNIX AND NOT APPLE)` in `CMakeLists.txt` (they use `epoll`,
+`eventfd`, `<endian.h>`) — so the parts of T1, T3, T4, T6 and T9 that
+live in `apps/exchange_server/main.cpp` or `adapters/tcp/tcp_server.cpp`
+are written here but only compile and run on the Linux CI leg. Where
+that applies, the task's subsection says so and describes what the
+Linux-only test asserts, following the same "documented, not silently
+omitted" precedent Phase 8's T4 benchmark set.
+
+### T1 — Explicit rejection when the inbound queue is full (R1)
+
+**What it does, in plain language.** The TCP gateway has two threads
+joined by two lock-free queues (see Phase 5). The I/O thread parses a
+client's bytes into an engine command and pushes it onto the *inbound*
+queue; the engine thread pops from there. That queue is deliberately
+bounded (4096 slots) and never blocks — if the engine falls far enough
+behind that the queue fills, `try_push` returns `false`. Before this
+change the frame handler ignored that return value: the command was
+moved-from and dropped, and the client was told nothing. It would sit
+waiting for an ack that would never come. After this change, a `false`
+from `try_push` causes the I/O thread to render an error response
+("system busy — order not accepted") and send it straight back to that
+client on the spot.
+
+**Exact location.** `apps/exchange_server/main.cpp:213–229` (the
+`else` branch of the frame handler's `std::visit`). The new test is
+`tests/inbound_queue_test.cpp:256–305`
+(`ParseToPushTest.QueueFullRendersExplicitRejection`), which replaced
+the old `QueueFullRejectsSilently` test that asserted — and thereby
+locked in — the previous drop-on-full behaviour.
+
+**Why respond from the I/O thread instead of routing an error through
+the engine.** This is the whole subtlety of R1. The "natural" fix in a
+request/response system is to push a rejection *result* back through the
+normal path — but the normal path for a result is the outbound queue,
+and the reason we are here at all is that the engine (hence the whole
+inbound→engine→outbound pipeline) is not keeping up. Worse, to get a
+rejection *to* the engine so it could emit that result, you would need a
+free slot in the inbound queue — the exact resource that just ran out.
+The only response path that does not depend on the congested resource is
+the one the I/O thread can execute by itself, synchronously, using state
+it already owns: the client's socket and the `render_error_fn` /
+`frame_message` / `send_to_client` helpers. That path already exists —
+it is what the handler does for a protocol parse error two lines up — so
+R1 is literally "call the existing direct-response path in one more
+case," not a new mechanism.
+
+**Why this is a correctness fix and not a latency fix.** Nothing here is
+measured or benchmarked. The argument is purely mechanical: an ignored
+`bool` return means a lost order and a hung client; checking it means
+the client learns immediately. `requirements.md` §2 calls this class of
+change "mechanism alone is the argument," and `NFR4` requires it ship
+independently of (and before) the latency work — which is why T1 is
+first and needs no Linux run to justify, only to exercise end to end.
+
+**Complexity / cost.** O(1) and allocation-free on the happy path (the
+added code is a single branch that is not taken when the push succeeds).
+On the *full* path it renders a short string and frames it — the same
+cost the parse-error path already pays, and by definition off the hot
+path, since the system is already saturated when it runs.
+
+**Drawbacks / tradeoffs accepted.** The rejection is indistinguishable
+on the wire from a protocol parse error — same `ERROR:` text frame, no
+dedicated machine-readable "backpressure" reason code. A client can't
+programmatically tell "you sent me garbage" from "I was too slow for
+you right now," even though the correct client reaction differs (fix the
+message vs. back off and retry). Adding a distinct reason code is a
+codec change touching every gateway protocol; `design.md` §1 explicitly
+defers it. For now, "the client is told *something* and can reconnect
+or retry" is the bar R1 sets, and a blunt error frame clears it.
+
+**Alternatives considered and rejected.** (1) *Block/spin until space
+frees* — reintroduces the head-of-line stall that the bounded
+non-blocking queue was chosen to prevent (Phase 5); one slow engine
+would freeze the entire I/O thread and every other client with it.
+(2) *Grow the queue unboundedly* — converts a visible, bounded failure
+into an invisible memory leak under sustained overload, the same
+anti-pattern R4 exists to kill on the write-buffer side.
+(3) *A distinct `EngineResult` pushed through the engine* — impossible
+without a free inbound slot, as above.
+
+**How it connects to earlier phases.** It reuses Phase 5's direct
+I/O-thread error path (`design.md` Phase 5 §5.x, the `ParseError`
+branch) and depends on Phase 4's `SpscRingBuffer::try_push` returning
+`bool` rather than blocking — the return value that this fix stops
+discarding. It changes no engine code and no wire format.
+
+**Check your understanding.** (1) Why can't the queue-full rejection be
+delivered as a normal `EngineResponse` with a new `EngineResult` value?
+(2) If the inbound queue were made blocking instead of bounded-and-
+dropping, which specific property from Phase 5 would break, and for
+whom? (3) The test fills a size-4 queue, submits a 5th order, and then
+asserts the drained queue contains exactly 4 commands and none of them
+is the 5th order's id — what regression would slip through if it only
+asserted "a rejection frame was produced"?
+
+### T2 — `OrderId` on `EngineResponse` (R2)
+
+**What it does, in plain language.** `EngineResponse` — the value
+`submit()` and `cancel()` return synchronously to their caller — used to
+carry only three things: a status code, a list of trades, and the
+unfilled quantity. It did *not* say *which order* it was answering. For
+the CLI (one order at a time, blocking) that was fine. For the TCP
+gateway, where a client can fire several orders before reading any
+replies, it is not: replies come back in order but with nothing on them
+to tie reply #2 to request #2. Both binary and text gateway codecs
+papered over this by writing a hard-coded `OrderId{0}` into the `order_id`
+field of the ack/reject they put on the wire. T2 adds `OrderId order_id`
+to `EngineResponse`, sets it at *every* return point in the engine, and
+has the codecs render the real value.
+
+**Exact locations.**
+- Field added: `core/Events.hpp` (`struct EngineResponse`), as a
+  trailing member with a default initializer `OrderId order_id{};`.
+- Set at every engine return point: `engine/matching_engine.cpp` —
+  `submit_limit` (invalid-qty, invalid-price, duplicate-id, STP,
+  pool-exhausted, and the accept path), `submit_market` (invalid-qty,
+  duplicate-id, STP, accept), and `cancel` (unknown-id and the accept
+  path).
+- Set on the pre-trade risk rejection path:
+  `risk/risk_engine.cpp` (`RiskEngine::submit`), pulling `o.id` out of
+  the `NewOrder` variant with a one-line `std::visit`.
+- Rendered by the codecs: `adapters/binary_protocol/GatewayCodec.cpp`
+  (`render_binary` — `AckMsg::order_id` and `RejectMsg::order_id` now
+  read `response.order_id`); `adapters/text_protocol/text_protocol_renderer.cpp`
+  (`render` — both the `ACCEPTED` and `REJECTED` lines gain an
+  ` id=<n>` tag).
+- `adapters/fix/FixEncoder.cpp` is *unchanged* except for a comment:
+  the FIX path builds its `ExecReportContext` from the parsed order, so
+  tags 37/11 were always the real id — FIX never had the placeholder the
+  design language refers to.
+- Tests: `tests/matching_engine_test.cpp` (a `Phase 11 T2` group —
+  accept, market accept, duplicate, invalid qty, invalid price, unknown
+  cancel, cancel accept, STP reject, pool exhausted, and the pipelined
+  pair), `tests/risk_engine_test.cpp`
+  (`R2_RiskRejectionCarriesOrderId`), and
+  `tests/binary_gateway_codec_test.cpp` (ack + reject now assert the
+  threaded id; Linux CI leg only).
+
+**Why an additive field on the existing struct, not a side-channel
+correlation id.** The order already has a stable, unique, client-chosen
+identity — its `OrderId`. Inventing a *second* identifier (a sequence
+number the gateway stamps on, say) to solve "which request does this
+answer" would be redundant indirection: two ids that must be kept in
+sync, twice the surface for them to disagree. The `OrderId` is already
+threaded end to end for matching and cancellation; T2 just stops
+throwing it away on the way back out.
+
+**Why a default member initializer matters here.** `EngineResponse` is
+an *aggregate* (no user-declared constructors), and a lot of code
+brace-initializes it positionally: `EngineResponse{status, {}, qty}`.
+Adding a 4th member with `{}` as its default keeps the struct an
+aggregate (C++14+ allows default member initializers in aggregates) and
+keeps every one of those three-argument initializers compiling — the
+new field is simply value-initialized to `OrderId{0}`. So the change is
+*source-compatible*: nothing breaks, and any site that still produces a
+zero id is a site that hasn't been updated to set it, not a compile
+error. The engine and risk layer set it explicitly at all their return
+points; a lingering `id=0` on the wire now means "the response came from
+somewhere that didn't attribute it," which post-T2 should be nowhere on
+the submit/cancel path.
+
+**Complexity / cost.** Zero. `OrderId` is a `uint64_t` wrapper; the
+struct grows by 8 bytes (it already owns a `std::vector`, so it was
+never small, and it is moved, not copied, through the SPSC queue —
+`TaggedResponse` transfers the vector by move). No new allocation, no
+new branch on the hot path — every return point already had the id in
+scope.
+
+**Drawbacks / tradeoffs accepted.** The plaintext debug protocol's wire
+output changes shape: `ACCEPTED: …` becomes `ACCEPTED id=7: …`. That is
+a deliberate, if minor, format change to a format whose stated purpose
+is manual `netcat` debugging (`design.md` §1). The binary protocol's
+wire *format* is unchanged — the `order_id` field already existed in
+`AckMsg`/`RejectMsg`; only the value written into it changed, from a
+constant `0` to the real id. Existing Linux e2e assertions use
+substring checks (`find("ACCEPTED")`), which the additive tag doesn't
+disturb.
+
+**Alternatives considered and rejected.** (1) *A gateway-assigned
+correlation id* — redundant, as above. (2) *Leave the codecs emitting
+`0` and correlate purely by reply ordering* — fragile the moment any
+path reorders or drops a reply (e.g. R1's direct queue-full rejection,
+which is produced out of band by the I/O thread), and impossible for a
+client that reconnects mid-stream. (3) *Only populate it on the accept
+path* — then a client can't correlate a *rejection*, which is exactly
+the case where knowing which order failed matters most.
+
+**How it connects to earlier phases.** It closes a gap Phase 7 opened
+and documented: `GatewayCodec.hpp`'s own comment admitted "the
+`order_id` must be threaded through by the caller … we accept `OrderId{0}`
+as a default … The E2E test will verify this is acceptable." T2 is the
+follow-through. It also composes cleanly with Phase 8's `RiskEngine`
+decorator — the decorator now stamps the id on its own rejections
+before the order ever reaches the engine.
+
+**Check your understanding.** (1) Why does adding `OrderId order_id{};`
+as the last member of `EngineResponse` *not* break
+`return EngineResponse{EngineResult::InvalidPrice, {}, Quantity{0}};`?
+(2) The FIX encoder needed no change but the binary and text encoders
+did — what structural difference between how FIX and the binary gateway
+build their outbound message explains that? (3) A client sends ADD(id=1),
+ADD(id=2), then reads two replies. Before T2, how could it tell whether
+reply-1 corresponds to id=1 or id=2, and in what real situation would
+"assume they're in order" give the wrong answer?
+
+### T3 — Exception boundary on the engine thread (R3)
+
+**What it does, in plain language.** The exchange server runs matching
+on a dedicated thread that pops commands off a queue and calls
+`engine.submit(...)` / `engine.cancel(...)` in a loop. Before this
+change, that call was unguarded. The project's Charter says the engine
+*returns* structured results and never *throws* for expected client
+outcomes — so a throw out of `submit`/`cancel` means something genuinely
+broke (an invariant violation, `std::bad_alloc`, a `std::map` operation
+throwing). An exception propagating out of a `std::thread`'s top-level
+function calls `std::terminate` — the entire venue dies, every connected
+client is dropped, because *one* client's input hit a bug. T3 wraps the
+dispatch in `try/catch` at the loop boundary: a throw is caught, logged
+to `stderr`, and turned into an `InternalError` response to the one
+client whose command triggered it. The engine thread continues to the
+next command.
+
+**Exact locations.**
+- New enum value: `core/Events.hpp` — `EngineResult::InternalError`,
+  last in the enum, explicitly documented as "not a business outcome."
+- Switch sites updated for exhaustiveness (the build is `-Werror` with
+  `-Wswitch`, so a new enumerator that any `switch (EngineResult)`
+  doesn't handle is a *compile error* — a useful forcing function):
+  `adapters/text_protocol/text_protocol_renderer.cpp`,
+  `apps/cli/console_printer.cpp`,
+  `adapters/binary_protocol/GatewayCodec.cpp` (reason code `10`; the
+  stale reason-code comment in `Message.hpp` got corrected while there).
+- The catch itself: extracted into a new platform-neutral header
+  `apps/exchange_server/engine_loop.hpp` —
+  `dispatch_command(EngineAPI&, TaggedCommand&) noexcept` and a helper
+  `command_order_id(const EngineCommand&)`.
+- `apps/exchange_server/main.cpp` now calls `dispatch_command` where it
+  used to inline the `std::visit`.
+- Test: `tests/engine_loop_test.cpp` (new target `engine_loop_test`,
+  built on every platform), with a `ThrowingEngine` stub `EngineAPI`.
+
+**Why extract a header instead of putting the `try/catch` inline in
+`main()`.** `apps/exchange_server/main.cpp` is gated behind
+`if(UNIX AND NOT APPLE)` in CMake — it uses `epoll`, `eventfd`, raw
+sockets — so anything left inline there cannot be unit-tested on the
+dev box at all, and `tasks.md` T3 explicitly asks for a test that
+"injects a deliberately-throwing stub `EngineAPI` and confirms the
+process does not terminate." The dispatch logic itself has no Linux
+dependency — it is a `std::visit` over a variant plus a `try/catch` —
+so pulling it into a header that includes only `core/` and
+`interfaces/` makes it testable everywhere while `main.cpp` keeps
+exactly the same behaviour by calling it. This is the same "extract
+the platform-neutral core, leave the platform glue in the app" move
+the codebase already uses for the text protocol (Phase 5 pulled
+`text_protocol/` out of `apps/cli/`).
+
+**Why catch at the loop boundary and not with `noexcept` on the port.**
+Marking `EngineAPI::submit` `noexcept` would *also* stop the throw from
+unwinding — by calling `std::terminate` *at the throw site* instead of
+at the thread top. That is strictly worse: it removes the option to
+recover. The whole point of R3 is that a bug should degrade to "one
+client gets an error, venue survives," and you only get that if the
+exception is allowed to unwind to a place that can turn it into a
+response. The composition root's engine loop already owns per-command
+error handling (it builds an `EngineResponse` and routes it) — that is
+the right place for the catch.
+
+**Why `catch (const std::exception&)` *and* `catch (...)`.** The named
+catch gets `what()` into the log, which is most of the diagnostic
+value. The bare `catch (...)` is the backstop for a throw that isn't
+`std::`-derived (someone `throw 42;` somewhere, a foreign exception) —
+without it, such a throw would still escape `dispatch_command` despite
+the `noexcept`, i.e. still terminate. Both funnel to the same
+`InternalError` response, tagged with `command_order_id(cmd.command)`
+so R2's correlation still works even on the failure path.
+
+**Complexity / cost.** A `try` block with no exception thrown is
+zero-cost on every mainstream C++ ABI (the "zero-cost exceptions"
+model — the cost is entirely in the unwind tables, paid only if a
+throw actually happens). So the happy path — every real order — is
+byte-for-byte the same work as before. The catch path allocates
+nothing beyond the `EngineResponse` it was going to build anyway.
+
+**Drawbacks / tradeoffs accepted.** `InternalError` is a real value a
+client can now receive, and there is no automated way to distinguish
+"transient, safe to retry" from "deterministic, will fail again" — a
+client that blindly retries an `InternalError` could wedge itself.
+That's acceptable because in a correct build this value is *never*
+produced; it exists purely so a latent bug is survivable in production
+long enough to be noticed and fixed, rather than manifesting as a
+full outage. The `stderr` log line is the operator's signal that it
+happened.
+
+**How it connects to earlier phases.** It leans on the Charter's
+"engine never throws for business outcomes" (Phase 1 `tech.md`) — that
+rule is what lets this catch treat *any* exception as a bug rather than
+an expected path. It reuses R2's `command_order_id` idea to tag the
+degraded response. And the extraction mirrors the Phase 5 text-protocol
+split.
+
+**Check your understanding.** (1) Why is catching at the thread's loop
+boundary strictly better than `noexcept` on `EngineAPI::submit`, given
+both prevent the exception from unwinding further? (2) The `try` is
+around *one command's* dispatch, inside the `while` loop, not around
+the whole loop — what would break if it wrapped the whole loop instead?
+(3) `dispatch_command` is marked `noexcept` but contains a `try` that
+can catch — is there any path by which an exception still escapes it,
+and what stops that?
+
+### T4 — Bounded per-connection write buffer (R4)
+
+**What it does, in plain language.** Each TCP connection has a
+`write_buffer` — a `std::string` of bytes the server wants to send but
+the kernel hasn't accepted yet. The normal flow: `send_to_client`
+appends to it, `flush_write_buffer` pushes as much as the kernel will
+take, and if the kernel's socket buffer is full (`EAGAIN`) the rest
+stays buffered and `EPOLLOUT` is armed to retry later. The hole: if a
+client simply *stops reading its socket*, `EAGAIN` never clears, and
+every subsequent response for that client is appended to a buffer that
+is never drained. `send_to_client` appended unconditionally — so one
+stalled client could grow that `std::string` until the server runs out
+of memory. T4 adds a configurable cap: after appending, if the buffer
+would exceed `max_write_buffer_bytes_`, that one connection is hard-
+closed (fd closed, removed from epoll, `Connection` erased) — the exact
+teardown already used when a client sends an oversized frame.
+
+**Exact locations.**
+- `adapters/tcp/tcp_server.hpp` — new `kDefaultMaxWriteBufferBytes`
+  constant (1 MiB), constructor gains a defaulted
+  `std::size_t max_write_buffer_bytes` parameter, new private member
+  `max_write_buffer_bytes_`.
+- `adapters/tcp/tcp_server.cpp` — constructor initializer list; the
+  cap check in `send_to_client`, placed *after* the
+  `write_buffer.append(data)` and *before* `flush_write_buffer(conn)`.
+- Tests: `tests/tcp_server_test.cpp` — a `TcpServerBoundedWriteTest`
+  fixture (overrides `write_buffer_cap()` to 4 KiB) with
+  `SlowReaderExceedingCapIsDisconnected`, plus
+  `NormalBurstUnderDefaultCapNotDisconnected` on the base fixture.
+  Linux CI leg only (the whole `tcp_server_test` is `#ifdef __linux__`).
+
+**Why check before the flush, not after.** `flush_write_buffer` can
+itself call `close_connection` (on a genuine write error like `EPIPE`),
+which erases the `Connection` and leaves any reference to it dangling.
+If the cap check ran *after* the flush, it would be reading
+`conn.write_buffer.size()` on a possibly-destroyed object. Checking
+right after `append`, while we still hold a valid `conn`, sidesteps
+that entirely. The cost is a slightly blunter policy: a single
+legitimate burst larger than the cap is dropped even if the kernel
+would have taken it a millisecond later. That is why the default is
+1 MiB — orders of magnitude above any real single response for this
+protocol — so a well-behaved client never comes close, and the check
+only ever fires for a genuinely stuck reader.
+
+**Why disconnect rather than apply backpressure.** A more forgiving
+venue would stop *reading* from the slow client (stop servicing its
+`EPOLLIN`) to let its send buffer drain, and resume once it does. That
+needs new per-connection state (a "read-paused" flag) and careful
+epoll re-arming. `design.md` §4 deliberately picks the blunt policy:
+disconnect is what the current architecture already supports with zero
+new state, and it converts an unbounded-memory *correctness* bug into a
+bounded, observable one (the client sees a reset; the operator can
+count disconnects). Backpressure is a listed future refinement, not a
+prerequisite for closing R4.
+
+**Why constructor DI for the limit.** It matches the codebase's
+existing convention — the port is a constructor parameter too (Phase
+5), not a compile-time constant or a setter. A defaulted parameter
+means `TcpServer(0)` still works everywhere it did; `0` explicitly
+disables the bound, which the framing-layer unit tests that never touch
+the write path use.
+
+**Complexity / cost.** One integer comparison per `send_to_client`
+call — negligible, and `send_to_client` is already the "we have a
+response to ship" path, not the match hot path. No new allocation. The
+disconnect path is O(1) (hash erase + `close`), same as the existing
+oversized-frame close.
+
+**Drawbacks / tradeoffs accepted.** A brief network hiccup on an
+otherwise-healthy client (kernel buffer momentarily full while a big
+multi-fill response lands) *could*, with an aggressively low cap,
+trip the disconnect. The 1 MiB default makes that essentially
+impossible for this protocol, but an operator who lowers it is
+choosing tighter memory bounds at the cost of tolerance for slow
+consumers. There is also no "warn before dropping" — the connection
+just goes.
+
+**How it connects to earlier phases.** It reuses Phase 5's
+`close_connection` teardown (originally built for the oversized-frame
+case, `design.md` Phase 5 §5) and Phase 5's constructor-injected-config
+convention. It is the write-side twin of T1 (R1): T1 bounds the
+*inbound* queue's failure mode (tell the client), T4 bounds the
+*outbound* buffer's failure mode (drop the client) — both replace
+"grow / lose data silently" with a bounded, visible outcome.
+
+**Check your understanding.** (1) Why does the cap check run before
+`flush_write_buffer` rather than after, and what specific bug would an
+"after" placement risk? (2) A client that reads slowly but *does*
+read — just not fast enough — behaves differently under this policy
+than one that never reads at all. How, and is that the right call?
+(3) The default cap is 1 MiB and a single response frame is at most
+~4 KiB — so how many responses would have to queue for one client
+before the disconnect fires, and what does that tell you about how
+"stuck" a reader has to be to hit it?
+
+### T5 — Decoupling feed publication from the match call stack (R5)
+
+**What it does, in plain language.** The matching engine holds one
+`EventSink*` and calls it synchronously — on its own call stack —
+`on_trade` for every fill, `on_order_accepted` / `on_order_cancelled`
+for every acceptance and cancel. In the production server that sink was
+`UdpFeedPublisher`, and its handlers call `sendto()`. So an order that
+crosses five resting orders made the engine issue five `sendto()`
+syscalls *inside* the one `submit()` call, before `submit()` returned.
+The research report measured this as the single biggest gap between the
+engine's real work (~300 ns of matching) and its wall-clock cost. T5
+inserts a queue: the engine is now wired to `QueuedEventSink`, whose
+handlers copy a small POD into a lock-free ring and return. A separate
+thread owns the real `UdpFeedPublisher`, drains the ring, and does the
+`sendto()` calls from *its* stack. `submit()` returns without ever
+having touched a socket.
+
+**Exact locations.**
+- New component: `adapters/udp/queued_event_sink.hpp` — `FeedEvent`
+  (the POD carried on the ring), `QueuedEventSink<Capacity>` (the
+  engine-thread-side `EventSink`), `apply()` (replay one `FeedEvent`
+  into a real sink), `drain_once()` (pop everything and replay), and
+  `run_feed_publisher()` (the drain thread's whole body).
+- Wiring: `apps/exchange_server/main.cpp` — constructs a
+  `QueuedEventSink<>`, passes `&queued_sink` (not `&feed_publisher`) to
+  `MatchingEngine`, spawns `feed_thread` running `run_feed_publisher`,
+  and joins it on shutdown after a final drain.
+- Tests: `tests/queued_event_sink_test.cpp` (new target
+  `queued_event_sink_test`) — push/pop fidelity, drop-and-count on a
+  full ring, `drain_once` FIFO replay, "engine `submit()` does no
+  synchronous sink work," a parity test asserting the queued path
+  produces byte-identical UDP wire messages to the direct path, and the
+  shutdown final-drain. All platform-neutral.
+
+**Why a new sink layer and not "make `UdpFeedPublisher::on_trade` push
+bytes to a queue."** `QueuedEventSink` stays a *generic* `EventSink`, so
+the ring holds engine-domain events (`Trade`, `OrderAccepted`), not
+serialized UDP packets. That keeps every bit of `UdpFeedPublisher`'s
+logic — best bid/ask tracking, the qty-vs-count "level drained"
+distinction, snapshot cadence — completely unchanged and still running
+on one thread; only *where* that thread runs moved off the engine's
+stack. If instead the publisher serialized to bytes on the engine
+thread and queued those, we would have relocated a *smaller* slice of
+the same problem (the serialization still runs on the hot stack) and
+coupled the queue's element type to one specific downstream protocol.
+
+**Why not delete `EventSink` and have the engine push straight to this
+ring.** `EventSink` is a port with more than one implementor — a
+benchmark counter, a logger, a test `RecordingSink`, `NullEventSink`.
+None of those want to be queue-based. Baking "push to a UDP feed ring"
+into the engine's own type would special-case one consumer into the
+core and break the reason the port exists (the engine does not know
+`UdpFeedPublisher`, or any of the others, exist). The port stays
+generic; only the concrete object the composition root constructs
+changes. `NullEventSink` and the benchmark harness are untouched.
+
+**Why `FeedEvent` is a fat plain struct, not a union or a variant.**
+It carries all three payloads as members and a `Kind` tag; only the one
+named by `Kind` is meaningful. A `union` would shave ~64 bytes per slot
+but needs user-declared special members to be safely usable, which
+fights `SpscRingBuffer`'s `std::array<T,N>` default-construction and
+by-value `try_push`. A `std::variant` has the same ergonomics but adds
+its own discriminant and visitation. All three payloads are trivially
+copyable PODs, so the fat struct is trivially copyable too — it drops
+into the ring with zero special-case code. At the default 16384 slots
+that is a few MiB of storage, allocated once at construction, never on
+the hot path.
+
+**Backpressure: drop and count.** If the ring is full, the event is
+discarded and an atomic `dropped_` counter is bumped. The engine thread
+is *never* blocked waiting for feed-queue space. A stale or missing
+market-data tick is the correct failure mode for a feed — consumers
+resync from the periodic snapshot — and the research report's own
+market-data section agrees, with the single caveat that drops must be
+*counted*, which `dropped()` exposes for diagnostics. This mirrors R1's
+philosophy for the inbound queue: bounded, non-blocking, visible
+failure rather than unbounded growth or a silent stall.
+
+**Complexity / cost.** Engine-thread side: one `FeedEvent` copy (memcpy
+of a POD) + one ring push (load two indices, store one) per event —
+tens of nanoseconds, no syscall, no allocation. That replaces, per
+event, a full `sendto()` (a mode switch into the kernel, UDP header
+construction, route lookup) — roughly two orders of magnitude.
+Drain-thread side does exactly the work the engine used to do, now off
+the critical path.
+
+**Drawbacks / tradeoffs accepted.** (1) A second thread and its ring —
+more moving parts, and on a machine with fewer cores than threads it is
+one more thing competing for a slot. (2) The feed is now *eventually*
+consistent with the book by a few microseconds (queue latency) instead
+of synchronously consistent — irrelevant for a UDP market-data feed,
+which is lossy and asynchronous by design anyway. (3) Under sustained
+overload the feed drops ticks; without T5 it would instead have slowed
+the engine (backpressure through `sendto`), which is arguably worse for
+a venue. (4) Shutdown ordering matters — the drain thread must be
+stopped *after* the engine loop and do a final drain, or trailing
+events are lost; `run_feed_publisher` handles this.
+
+**Alternatives considered and rejected.** Covered above: byte-queue in
+the publisher (relocates less of the problem, couples element type);
+engine pushes directly (breaks the port); a Disruptor-style
+multi-consumer ring (`requirements.md` §6 — the journal and the feed
+want *different* streams, so the named pattern solves a bigger problem
+than R5 has).
+
+**How it connects to earlier phases.** It is the intended use of the
+Phase 1 `EventSink` port ("this is what lets Phase 6's UDP feed observe
+everything without the engine knowing it exists" — `tech.md`) plus the
+Phase 4 `SpscRingBuffer` (previously used only for the gateway's
+inbound/outbound command queues; now also for events). `UdpFeedPublisher`
+from Phase 6 is reused verbatim.
+
+**Check your understanding.** (1) Why does the ring carry `Trade` /
+`OrderAccepted` structs rather than already-serialized UDP packet bytes
+— what would the byte version cost that the struct version does not? (2)
+If `run_feed_publisher` did *not* do a final `drain_once` after seeing
+the stop flag, what exactly would be lost, and when? (3) The engine
+thread is a single producer and the drain thread a single consumer of
+this ring — why does that make `SpscRingBuffer` (rather than a
+mutex-guarded `std::deque`) the right structure, and what breaks if a
+second thread ever calls `QueuedEventSink::on_trade`?
+
+### T6 — Coalescing the eventfd wakeup (R6)
+
+**What it does, in plain language.** After the engine thread pushes a
+response onto the outbound queue, it must wake the I/O thread so it
+flushes that response to the client. The wakeup is an `eventfd` write —
+one syscall. Before T6 that write happened once per response, right
+inside the per-command loop body: 1000 orders in a burst → 1000
+`eventfd` writes. But the I/O thread's drain handler, when it wakes,
+*always* empties the outbound queue completely in one pass. So waking it
+once and waking it a thousand times flush the same thousand responses —
+999 of those syscalls did nothing. T6 defers the write: a
+`WakeupCoalescer` records "a response is pending," and the write is
+issued once, when the inbound queue next reads empty (the drain cycle is
+ending). Under load, a whole burst of responses collapses into one
+wakeup; under light load, the queue reads empty immediately after the
+single response, so the wakeup still fires right away.
+
+**Exact locations.**
+- `apps/exchange_server/engine_loop.hpp` — new `WakeupCoalescer` class
+  (`note_response()`, `should_notify_on_idle()`, `pending()`).
+- `apps/exchange_server/main.cpp` — the engine loop: `note_response()`
+  replaces the inline `::write(g_eventfd, ...)` after each outbound
+  push; the write itself moves into the `if (!inbound.try_pop(cmd))`
+  branch, gated on `should_notify_on_idle()`; a trailing flush after the
+  loop covers a response pushed on the final iteration before shutdown.
+- Tests: `tests/engine_loop_test.cpp` — `WakeupCoalescerTest` group,
+  including `simulate_notifies()` which runs the coalescer over a
+  scripted stream of `try_pop` outcomes and counts wakeups (100
+  back-to-back commands → 1 wakeup, not 100; one wakeup per burst; zero
+  when no response was produced).
+
+**Why "notify when the queue would go idle" and not a timer or a
+count.** A time-based window ("flush every 100 us") or a count-based one
+("flush every 32 responses") both *add latency*: a response can sit
+unflushed for up to the window. Notifying exactly when the inbound queue
+empties adds none — at that instant the engine thread has no more work
+to do anyway, so issuing the wakeup costs nothing it could otherwise be
+spending on matching. It gets the full syscall reduction under load
+(many commands arrive between drains) with zero latency penalty under
+light load (one command, then idle → wakeup fires immediately). The
+batching granularity is chosen to *match* the I/O thread's existing
+drain-to-exhaustion behaviour, so the number of responses flushed per
+wakeup is unchanged — only the number of wakeups requested drops.
+
+**Complexity / cost.** `WakeupCoalescer` is one `bool`. `note_response`
+sets it; `should_notify_on_idle` tests-and-clears it. No atomics — it is
+touched only by the engine thread. The saving is real syscalls removed
+from the hot path: under a burst of N pipelined orders, N-1 `eventfd`
+writes disappear.
+
+**Drawbacks / tradeoffs accepted.** The wakeup now depends on the
+inbound queue transiently reading empty. Under *permanent* saturation —
+the inbound queue literally never empties because commands arrive faster
+than they are processed — the wakeup would be deferred indefinitely and
+responses would pile in the outbound queue unflushed. In practice the
+engine drains commands far faster than a network can deliver them (the
+research report's whole point is that matching is ~300 ns), so the
+inbound queue empties constantly; and the outbound queue is 65536 slots
+with a spin-retry guard, so it has enormous headroom. If this ever
+became a real risk, a "also flush every K responses" safety valve could
+be added — but that reintroduces the latency knob T6 deliberately
+avoided, so it is not added speculatively.
+
+**Alternatives considered and rejected.** Timer/count batching window
+(adds bounded latency — rejected above). Leaving one write per response
+(the status quo — measured as pure syscall waste under load). Making the
+I/O thread poll the outbound queue without any eventfd (busy-polls a
+second core, and the eventfd integration with `epoll_wait` is the whole
+reason the I/O thread can block cleanly).
+
+**How it connects to earlier phases.** It tunes the Phase 5 two-thread
+gateway design without changing its contract: the I/O thread's
+`set_response_drain_handler` still drains to exhaustion on every wakeup
+(`main.cpp`), so batching the *wakeups* is invisible to it. It pairs
+with T5 — T5 removes `sendto` syscalls from the engine's stack, T6
+removes redundant `eventfd` syscalls from the engine's loop; together
+they are what R9's `perf trace -s` before/after is meant to quantify.
+
+**Check your understanding.** (1) Why does coalescing the wakeup add no
+latency under light load, when a fixed-time batching window would? (2)
+The I/O thread drains the outbound queue to exhaustion on every wakeup —
+why is that property what makes it safe to send it *fewer* wakeups than
+there are responses? (3) Under what traffic pattern could the coalesced
+wakeup be deferred for a long time, why does it not happen in this
+system, and what single measurement would tell you if it started to?
+
+### T7 — Per-client monotonic-ID watermark (R7)
+
+**What it does, in plain language.** The engine has always had to reject
+a re-used `OrderId`. It did this with
+`std::unordered_set<OrderId> ever_seen_ids_`: every accepted order's id
+went into the set and stayed there for the life of the process, and a
+new order whose id was already in the set was rejected as
+`DuplicateOrderId`. The set never shrank — cancelling or fully filling an
+order did not remove its id — so on a long-running venue the set grows
+without bound, one entry per order ever accepted. T7 replaces it with
+`std::unordered_map<ClientId, OrderId> last_accepted_id_`: for each
+client, just the single highest id that client has had accepted. A new
+order is rejected if its id is `<=` that client's stored value. The map
+has one entry per *client*, not per *order*.
+
+**Exact locations.**
+- `engine/matching_engine.hpp` — member swapped
+  (`ever_seen_ids_` → `last_accepted_id_`); `<unordered_set>` include
+  → `<unordered_map>`; new diagnostic accessor
+  `tracked_client_count()`.
+- `engine/matching_engine.cpp` — the check in both `submit_limit` and
+  `submit_market` (`last_accepted_id_.find(order.owner)` + `id.value <=
+  it->second.value`); the acceptance-time update
+  (`last_accepted_id_[order.owner] = order.id`, replacing
+  `ever_seen_ids_.insert`).
+- `core/Events.hpp` — the `DuplicateOrderId` enum comment.
+- Tests: `tests/matching_engine_test.cpp` — a `Phase 11 T7` group
+  (same-id-different-clients now both accepted; same-id-same-client
+  rejected; lower-id-after-higher rejected; equal-to-watermark
+  rejected; rejected order does not advance the watermark) plus
+  `MatchingEngineWatermarkStress.StructureStaysBoundedOver200kCycles`.
+  Comment-only touch-ups in `pool_exhaustion_test.cpp`,
+  `edge_case_test.cpp`, `integration_test.cpp`, `risk_engine_test.cpp`
+  where they referenced `ever_seen_ids_` by name.
+- `benchmarks/results/phase-11-watermark-memory.md` — the before/after
+  retained-state table.
+
+**The semantic change, stated precisely.** Old rule: *no `OrderId` may
+ever repeat across any client, for the life of the process* (global
+lifetime uniqueness). New rule: *each client's own `OrderId`s must
+strictly increase* (per-client monotonic uniqueness). Two different
+clients may now use the same numeric id. This is a deliberate narrowing
+(`requirements.md` §7), chosen because:
+- The watermark is O(1) memory *per client* and O(1) per check, with no
+  probabilistic reasoning.
+- It needs nothing the engine doesn't already have — just
+  `order.owner`, populated since Phase 8.
+- The wire contract is unchanged: a violation still returns
+  `EngineResult::DuplicateOrderId`, so no codec, no client, sees a new
+  code.
+
+**Why the compatibility risk turned out small.** Every existing
+duplicate-ID test in the suite happened to submit its re-used ids from
+one client (the default `ClientId{0}`) and at a value at or below the
+highest already used — so the monotonic rule rejects exactly the same
+submissions the set did. The full suite passed unchanged; the only
+edits to existing tests were stale-comment fixes. The *new* tests are
+what exercise the changed behaviour: cross-client id reuse (now
+allowed) and the strictly-monotonic requirement (id 3 after id 10 from
+the same client is now rejected, where the set would have accepted it).
+
+**Why a `std::map<ClientId, OrderId>` and not the bounded-ring +
+Bloom-filter option.** The Bloom option keeps *global* semantics exactly
+— any id, any client, once only — but at the price of a nonzero
+false-duplicate-rejection rate (a legitimate order occasionally bounced)
+and two data structures with an eviction policy. The watermark is
+exactly correct for the semantics it offers, needs no tuning, and
+carries no false-positive rate to reason about. The tradeoff it accepts
+is the narrower guarantee — a one-time, documented, reviewable change —
+rather than a permanent approximation.
+
+**Why not session-scoped ids (reset on reconnect).** That needs a
+session / reconnect lifecycle layer the project does not have and which
+`requirements.md` §6 puts out of scope for this phase. The watermark
+needs only `ClientId`, which exists today.
+
+**Complexity / space.** Per check: one hash lookup keyed by `ClientId`
+plus one 64-bit compare — O(1), independent of book depth and of how
+many orders that client has live. Space: O(number of distinct clients),
+versus the old O(number of orders ever accepted). On the hot path it
+*removes* an allocation: `ever_seen_ids_.insert` allocated a set node
+for every accepted order; `last_accepted_id_[owner] = id` allocates a
+map node only the first time each client is seen, and is a plain value
+overwrite every time after (NFR3 — the phase must not trade unbounded
+growth for a new hot-path allocation, and this doesn't; it reduces
+allocation).
+
+**Drawbacks / tradeoffs accepted.** (1) A client can no longer reuse a
+lower id even for an order that was fully cancelled long ago — ids are
+strictly one-way per client. In practice FIX-style gateways already
+assign monotonically increasing `ClOrdID`s, so this matches real usage,
+but a client that recycled ids would break. (2) Global uniqueness is
+genuinely gone: an operator correlating orders across clients by id
+alone can no longer assume uniqueness. (3) The watermark is per-engine
+state with no persistence — a process restart resets every client's
+watermark to "unseen," so ids can be reused after a restart (the old
+set had the same property).
+
+**How it connects to earlier phases.** It depends on Phase 8's
+`ClientId owner` retrofit — the field this whole rule keys on — and it
+undoes the specific unbounded-growth problem the research report's
+Finding 4 identified in the Phase 1 `ever_seen_ids_` design. Phase 1's
+`tech.md` line "client-supplied OrderIds, validated for uniqueness by
+the engine" still holds; "uniqueness" is now defined per-client.
+
+**Check your understanding.** (1) A client submits id 100, cancels it,
+then submits id 100 again — accepted or rejected, and why? What about id
+101 then id 100? (2) Why does replacing a `std::unordered_set` insert
+per order with a `std::unordered_map` upsert per order *reduce*
+steady-state heap allocation rather than just moving it? (3) The old
+rule guaranteed "no id collision across the whole venue." Name one
+concrete operational task that guarantee made easy and that the new
+per-client rule makes harder — and why the phase accepted that cost.
+
+### T8 — O(1) self-trade prevention (R8)
+
+**What it does, in plain language.** Self-trade prevention (STP) has to
+answer, before an incoming order mutates anything: "would this order
+trade against a resting order that the *same client* owns?" The old
+`would_self_cross` answered it by walking the crossable opposite side of
+the book — level by level, and within each level order by order along
+the intrusive `next` chain — looking for a same-owner resting order,
+stopping when it passed the incoming order's limit price. That walk's
+cost grew with how deep the book was, and a market order (no price
+ceiling) would scan the *entire* opposite side. T8 replaces the walk
+with a small per-client index: for each client, the set of prices at
+which they currently have resting bids and asks. The check becomes "look
+up this client, read their best opposite-side resting price, compare it
+to the incoming limit" — a constant number of operations no matter how
+deep the book is.
+
+**Exact locations.**
+- `engine/matching_engine.hpp` — new nested `struct ClientRestingPrices
+  { std::map<Price,uint32_t> bids, asks; }`, new member
+  `std::unordered_map<ClientId, ClientRestingPrices> client_resting_`,
+  new private helpers `index_rest` / `index_unrest`; `<map>` /
+  `<cstdint>` includes.
+- `engine/matching_engine.cpp` — `index_rest` called right after the
+  one `book_.add_order` in `submit_limit`; `index_unrest` called right
+  before each of the three `book_.remove_order` calls (in `cancel`, and
+  the CancelResting-STP and fully-consumed branches of
+  `match_against_book`); `would_self_cross` rewritten to consult
+  `client_resting_` instead of walking `book_.asks()` / `book_.bids()`.
+- Tests: `tests/matching_engine_test.cpp` — `StpDepthTest.CorrectAtLargeDepth`
+  (self-cross still detected behind 2,000 other-owned levels; per-client
+  scoping preserved) and `StpDepthTest.CostDoesNotScaleWithDepth` (times
+  200k STP-rejects at depths 1/10/100/1000, asserts the ratio stays
+  near 1x). All Phase 8 STP behaviour tests pass unmodified.
+- `benchmarks/results/phase-11-stp-depth.md` — the depth-vs-cost table
+  (measured ratio depth-1000/depth-1 = **1.04x**, versus ~50x before).
+
+**Why a `std::map<Price,count>` per client per side, not "two
+`optional<Price>`."** `design.md` §8 describes tracking each client's
+best resting bid and best resting ask. The subtlety it glosses: when the
+order *at* that best price is removed, you need the *next* best, and a
+lone `optional<Price>` can't give you that without a scan. An ordered
+`std::map` keyed by price gives O(1) access to the extreme
+(`begin()` / `rbegin()`) *and* survives removal of the extreme (the next
+key is the new extreme). The value is a count, so a client resting
+several orders at one price collapses to one map entry. Lookup in
+`would_self_cross` is O(1); maintenance is O(log k) where k is the
+number of *distinct prices that one client* has resting — bounded by
+that client's own quoting breadth, never by book depth. That satisfies
+R8's "time independent of book depth."
+
+**Why not the per-level-owner-count alternative.** The research report
+also floated keeping, at each price level, a count of orders per owner.
+That makes `would_self_cross` O(levels crossed) rather than
+O(depth * orders-per-level) — a real improvement, but a market order
+sweeping 500 levels still pays 500 lookups. The per-client index is
+O(1) regardless of sweep size, which is what R8 asks for.
+
+**Why this doesn't reopen the Phase 8 "STP in the engine vs. in the
+RiskEngine decorator" argument.** Phase 8's `design.md` §5 / ADR-007
+kept STP inside the engine's match loop for three reasons: it must run
+before any state mutation, duplicating the crossing logic in the
+decorator would be error-prone, and the decorator would pay to
+re-derive book state it doesn't have. None of those depended on the
+*scan* being O(depth) — they depended on *ordering* (STP decides before
+anything mutates), which an O(1) lookup satisfies just as well. T8
+changes only how the in-engine check is computed, not where it lives.
+
+**Correctness: the new check is equivalent to the old walk.** Old walk,
+buy side: return true iff some ask level with `price <= limit` (or any,
+for a market order) contains an owner order. New check: the owner's
+*lowest* resting ask is `<= limit` (or the owner has any resting ask,
+for a market order). "Lowest ask `<= limit`" is exactly "there exists an
+owner ask at a crossable price," since the lowest is the first to
+cross. The sell side mirrors it with the owner's *highest* resting bid
+and `>= limit`. Every Phase 8 STP test — same-owner reject with no side
+effects, different-owner proceeds, STP-disabled proceeds, same-owner
+resting *behind* another owner at a crossable price, market-order
+self-cross, CancelResting ordering — passes without modification.
+
+**Complexity / cost.** `would_self_cross`: one `unordered_map` lookup +
+one `std::map` `begin()`/`rbegin()` deref + one `Price` compare — O(1),
+independent of depth and sweep size. Maintenance per resting add/remove:
+one `unordered_map` lookup + one `std::map` insert-or-increment /
+decrement-or-erase — O(log k_client). Space: O(sum over clients of their
+distinct resting prices) — in the worst case the number of resting
+orders, same order as the book itself, but typically far smaller
+(market makers quote a handful of price levels).
+
+**Drawbacks / tradeoffs accepted.** (1) `index_rest` can allocate a
+`std::map` node — when a client rests at a price it doesn't already
+have resting. This is new heap activity that the old O(depth) scan
+didn't have. It is gated on `stp_.enabled` (the default-off config pays
+nothing, NFR3), it is bounded by each client's own quoting breadth
+(not book depth), and for the steady state of a client re-quoting the
+same ladder it's zero (increment an existing node). The phase accepts
+this: it trades an unbounded-per-sweep *scan* for a bounded,
+mostly-amortized-away *allocation*, and the net hot-path allocation
+across R7+R8 still goes down (R7 removed a per-order set insert). (2)
+Two more data structures to keep in sync with the book — every code
+path that adds or removes a resting order must call the matching
+`index_*` helper, or the index silently drifts. There are exactly four
+such call sites and each is annotated.
+
+**How it connects to earlier phases.** It depends on Phase 8's
+`ClientId owner` on the resting `Order` (the key the index is built on)
+and preserves Phase 8 / ADR-007's ordering guarantee (STP decides
+before any mutation). It sits next to T7 in `MatchingEngine` — T7
+bounds the duplicate-ID structure, T8 bounds the STP check's cost — and
+`tasks.md` sequenced them back-to-back only to avoid two people editing
+the same class at once, not because either needs the other.
+
+**Check your understanding.** (1) Why can't the per-client "best
+opposite-side price" be a single `std::optional<Price>` — what operation
+breaks when the order at that price is cancelled? (2) The maintenance
+cost is O(log k) where k is "distinct prices this client has resting."
+Why is that independent of book depth, and when could k actually get
+large? (3) A market order has `limit_price == std::nullopt`. Trace what
+`would_self_cross` does in that case for a sell order, and explain why
+"the owner has any resting bid at all" is the right condition. (4) If
+one `index_unrest` call were missing (say, someone adds a new
+order-removal path and forgets it), what would the observable bug be —
+false self-cross rejections, missed ones, or both?
+
+### T9 — Before/after syscall-count verification (R9)
+
+**What it does.** No production code. T9 is the phase's designated
+acceptance evidence: a `perf trace -s` syscall histogram of
+`exchange_server` under a crossing-order load, captured on the
+pre-Phase-11 build and the post-T6 build, comparing `sendto`, `write`
+and `sched_yield` counts. It is the one falsifiable claim in either
+report that a real Linux box can settle in minutes, and the number this
+phase is judged against — deliberately *not* a synthetic single-process
+latency micro-benchmark (NFR2), whose ~100 ns clock granularity the
+research report already flagged as untrustworthy.
+
+**Exact location.** `benchmarks/results/phase-11-syscall-trace.md` —
+methodology, the mechanism-derived expected table, reproduction steps
+for a Linux host, and an explicit "not captured in this environment"
+note (Windows dev box, no Linux, no `perf`, and `exchange_server` is
+Linux-only) that follows Phase 8 T4's precedent of documenting the gap
+rather than silently omitting it.
+
+**Why a syscall trace and not a latency harness.** R5 and R6 remove
+*syscalls*, and a syscall either happened or it didn't — `perf trace -s`
+counts them exactly, with no quantization and no dependence on trusting
+a measured nanosecond figure. The research report's own latency numbers
+were taken on an unpinned Windows box with ~100 ns clock granularity;
+citing them as this phase's evidence would just relaunder a hypothesis
+as a result. A count of `sendto` on the engine thread's TID going from
+~k-per-filled-order to 0 is unarguable.
+
+**What was verifiable here.** The mechanism, by platform-neutral unit
+test: `QueuedEventSinkTest.EngineSubmitDoesNoSynchronousSinkWork` (T5 —
+`submit()` returns having done only a ring push) and
+`WakeupCoalescerTest.BurstOfManyResponsesCollapsesToOneNotify` (T6 — N
+responses, 1 wakeup). R9 is those two confirmed end-to-end on real
+hardware.
+
+**Check your understanding.** (1) Why is "engine-thread `sendto` count:
+5 → 0" a stronger result than "median order-to-ack latency: 3.1 µs →
+2.4 µs" measured on this dev box? (2) After R5, the *process-wide*
+`sendto` count is roughly unchanged — so what exactly did R5 improve,
+and which column of the trace shows it? (3) Under what load shape would
+T6's `write`-coalescing show the biggest reduction, and under what shape
+would it show none (correctly)?
+
+### T10 — LEARNING.md coverage
+
+Per `.kiro/steering/learning-doc.md`, each implementation task's
+`LEARNING.md` entry is bundled into that task's own review, not deferred
+to a separate pass. T1–T9 each have their subsection above, written as
+they landed. T10 is the checkpoint that confirms none was skipped: the
+"Phase 11 — Iteration: Implementation (T1–T11)" section has one
+subsection per task, T1 through T9, plus this note.
+
+### T11 — Client-facing duplicate-ID semantics
+
+**What it does.** Documentation only, no behaviour change. T7 narrowed
+duplicate-`OrderId` rejection from global lifetime uniqueness to
+per-client monotonic uniqueness (`requirements.md` §7). T11 makes sure
+no client-facing description still claims the old, broader guarantee.
+
+**What was found.** The project has no separate client/protocol
+reference document that describes id uniqueness — the contract lived in
+code comments and the phase specs. The touch-points, all updated under
+T7 and re-checked here:
+- `core/Events.hpp` — the `EngineResult::DuplicateOrderId` enum comment
+  now states the per-client monotonic rule and notes the result code is
+  unchanged.
+- `.kiro/steering/tech.md` line "Client-supplied `OrderId`s, validated
+  for uniqueness by the engine" — still accurate; "uniqueness" is now
+  defined per-client, which is the natural reading for a FIX-style
+  gateway (each session's `ClOrdID`s increase). No edit needed, but
+  noted here so a future reader knows it was considered.
+- The binary protocol's `RejectMsg` reason-code table (`Message.hpp`) —
+  `1 = DuplicateOrderId` is unchanged; the *meaning* of when code 1 is
+  sent narrowed, which is a server-behaviour note, not a wire-format
+  change.
+
+**The client-visible delta, stated once for the record.** A client that
+reused a numeric `OrderId` across two different connections/`ClientId`s
+used to get `DuplicateOrderId` on the second; it is now accepted. A
+client that reuses or decreases its *own* `OrderId` still gets
+`DuplicateOrderId`. Well-behaved gateways (monotonic `ClOrdID` per
+session) see no difference.

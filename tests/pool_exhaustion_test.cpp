@@ -63,7 +63,8 @@ TEST_F(PoolExhaustionTest, ThirdOrderRejectedWhenPoolFull) {
 }
 
 // ===========================================================================
-// No side effects: rejected order's ID is NOT in ever_seen_ids_.
+// No side effects: a PoolExhausted rejection does not advance the client's
+// monotonic-ID watermark (Phase 11 R7), so the id can still be accepted.
 // ===========================================================================
 TEST_F(PoolExhaustionTest, RejectedOrderIdNotRecorded) {
     // Fill the pool.
@@ -77,9 +78,10 @@ TEST_F(PoolExhaustionTest, RejectedOrderIdNotRecorded) {
         NewOrder{LimitOrder{OrderId{3}, Side::Buy, Price{99}, Quantity{5}}});
     EXPECT_EQ(r3.status, EngineResult::PoolExhausted);
 
-    // The rejected OrderId should NOT be in ever_seen_ids_.
+    // The rejected OrderId must not have advanced the watermark.
     // Prove it: submit the same ID again after freeing a slot — it should
-    // succeed (if the ID had been recorded, it would get DuplicateOrderId).
+    // succeed (if the id had been recorded as accepted, the watermark
+    // would be 3 and this retry would get DuplicateOrderId).
     engine.cancel(OrderId{1});  // frees a pool slot
     auto retry = engine.submit(
         NewOrder{LimitOrder{OrderId{3}, Side::Buy, Price{99}, Quantity{5}}});

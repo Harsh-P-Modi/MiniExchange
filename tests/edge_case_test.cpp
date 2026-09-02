@@ -214,10 +214,11 @@ TEST_F(EdgeCaseTest, RapidAddCancelSequencesNoCorruption) {
         ASSERT_EQ(engine.book().order_count(), 0u) << "Count wrong after cancel at iter " << i;
     }
 
-    // Final state: book is empty, all IDs used are lifetime-unique.
+    // Final state: book is empty; the client's monotonic watermark now
+    // sits at the highest id used (1199).
     EXPECT_EQ(engine.book().order_count(), 0u);
 
-    // Verify none of the IDs can be reused.
+    // Verify an earlier id can't be reused (id 1000 <= watermark 1199).
     auto resp = engine.submit(
         NewOrder{LimitOrder{OrderId{1000}, Side::Sell, Price{100}, Quantity{1}}});
     EXPECT_EQ(resp.status, EngineResult::DuplicateOrderId);

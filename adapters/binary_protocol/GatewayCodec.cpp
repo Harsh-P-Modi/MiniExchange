@@ -75,6 +75,7 @@ uint8_t engine_result_to_reason_code(EngineResult result) {
         case EngineResult::PriceOutOfBand:     return 7;
         case EngineResult::QuantityTooLarge:   return 8;
         case EngineResult::TickSizeMisaligned: return 9;
+        case EngineResult::InternalError:      return 10;  // Phase 11 R3
         case EngineResult::Accepted:           return 0;  // not a rejection
     }
     return 0;
@@ -96,7 +97,10 @@ std::string render_binary(const EngineResponse& response) {
         RejectMsg reject;
         reject.type = MessageType::Reject;
         reject.reason_code = engine_result_to_reason_code(response.status);
-        reject.order_id = OrderId{0};  // order_id not available from response alone
+        // Phase 11 R2: EngineResponse now carries the OrderId it answers,
+        // set at every engine return point — use it instead of the old
+        // OrderId{0} placeholder so the client can correlate the reject.
+        reject.order_id = response.order_id;
         return encode_to_string(reject);
     }
 
@@ -106,7 +110,7 @@ std::string render_binary(const EngineResponse& response) {
     AckMsg ack;
     ack.type = MessageType::Ack;
     ack.padding = 0;
-    ack.order_id = OrderId{0};  // order_id not carried in EngineResponse
+    ack.order_id = response.order_id;  // Phase 11 R2 (was OrderId{0})
     ack.remaining_qty = response.remaining_qty;
     result += encode_to_string(ack);
 

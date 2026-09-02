@@ -43,8 +43,14 @@ struct CapturedFrame {
 // cleanly after each test.
 class TcpServerTest : public ::testing::Test {
 protected:
+    // Overridable so a derived fixture can pin a small R4 write-buffer
+    // cap; the base fixture keeps the production default.
+    virtual std::size_t write_buffer_cap() const {
+        return kDefaultMaxWriteBufferBytes;
+    }
+
     void SetUp() override {
-        server_ = std::make_unique<TcpServer>(0);  // OS-assigned port
+        server_ = std::make_unique<TcpServer>(0, write_buffer_cap());
         server_->set_frame_handler(
             [this](ClientId id, std::string_view payload) {
                 std::lock_guard<std::mutex> lock(mutex_);
@@ -363,6 +369,93 @@ TEST_F(TcpServerTest, SlowReaderDoesNotBlockOthers) {
 
     ::close(slow_fd);
     ::close(fast_fd);
+}
+
+// --- Test: R4 — a connection whose outbound backlog exceeds the cap is
+// dropped, and other connections are unaffected. ---
+//
+// A small (4 KiB) write-buffer cap is pinned via the fixture override.
+// The "slow" client sends FLOOD_ frames whose handler echoes ~2 KiB
+// each back but never reads them, so its write_buffer grows past the
+// cap and TcpServer hard-closes it. A second client keeps working.
+class TcpServerBoundedWriteTest : public TcpServerTest {
+protected:
+    std::size_t write_buffer_cap() const override { return 4096; }
+};
+
+TEST_F(TcpServerBoundedWriteTest, SlowReaderExceedingCapIsDisconnected) {
+    server_->set_frame_handler(
+        [this](ClientId id, std::string_view payload) {
+            if (payload.size() >= 6 && payload.substr(0, 6) == "FLOOD_") {
+                std::string chunk(2048, 'X');
+                server_->send_to_client(id, chunk);
+            } else {
+                std::lock_guard<std::mutex> lock(mutex_);
+                frames_.push_back({id, std::string(payload)});
+            }
+        });
+
+    int slow_fd = connect_client();
+    int good_fd = connect_client();
+    ASSERT_GE(slow_fd, 0);
+    ASSERT_GE(good_fd, 0);
+
+    // The slow client never reads. Each FLOOD_ frame makes the server
+    // append 2 KiB to its write_buffer; after a few, the buffer passes
+    // the 4 KiB cap and the server drops the connection.
+    for (int i = 0; i < 50; ++i) {
+        std::string msg = "FLOOD_" + std::to_string(i);
+        if (!send_all(slow_fd, make_frame(msg))) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Slow client should now be disconnected: recv returns 0 (EOF) or
+    // ECONNRESET.
+    char buf[1];
+    ssize_t n = ::recv(slow_fd, buf, sizeof(buf), MSG_DONTWAIT);
+    EXPECT_TRUE(n == 0 || (n < 0 && errno == ECONNRESET))
+        << "slow reader was not disconnected after exceeding the write cap";
+
+    // Good client is unaffected.
+    ASSERT_TRUE(send_all(good_fd, make_frame("STILL_ALIVE")));
+    ASSERT_TRUE(wait_for_frames(1));
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ASSERT_EQ(frames_.size(), 1u);
+        EXPECT_EQ(frames_[0].payload, "STILL_ALIVE");
+    }
+
+    ::close(slow_fd);
+    ::close(good_fd);
+}
+
+// --- Test: R4 — with a generous cap, a normal-sized burst is NOT
+// dropped (the bound must not punish well-behaved clients). ---
+TEST_F(TcpServerTest, NormalBurstUnderDefaultCapNotDisconnected) {
+    server_->set_frame_handler(
+        [this](ClientId id, std::string_view payload) {
+            if (payload == "ECHO") {
+                server_->send_to_client(id, std::string(8192, 'Y'));
+            }
+            std::lock_guard<std::mutex> lock(mutex_);
+            frames_.push_back({id, std::string(payload)});
+        });
+
+    int fd = connect_client();
+    ASSERT_GE(fd, 0);
+    ASSERT_TRUE(send_all(fd, make_frame("ECHO")));
+    ASSERT_TRUE(wait_for_frames(1));
+
+    // The client DID read nothing yet, but 8 KiB << 1 MiB default cap,
+    // so the connection stays open — a follow-up frame is still served.
+    ASSERT_TRUE(send_all(fd, make_frame("PING")));
+    ASSERT_TRUE(wait_for_frames(2));
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    EXPECT_EQ(frames_.back().payload, "PING");
+
+    ::close(fd);
 }
 
 }  // namespace
