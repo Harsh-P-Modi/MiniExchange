@@ -374,10 +374,12 @@ TEST_F(TcpServerTest, SlowReaderDoesNotBlockOthers) {
 // --- Test: R4 — a connection whose outbound backlog exceeds the cap is
 // dropped, and other connections are unaffected. ---
 //
-// A small (4 KiB) write-buffer cap is pinned via the fixture override.
-// The "slow" client sends FLOOD_ frames whose handler echoes ~2 KiB
-// each back but never reads them, so its write_buffer grows past the
-// cap and TcpServer hard-closes it. A second client keeps working.
+// A small write-buffer cap is pinned via the fixture override. The "slow"
+// client's single FLOOD_ frame makes the handler echo back a chunk larger
+// than the cap in one send_to_client call; TcpServer checks the cap right
+// after appending (before flushing), so the connection is dropped
+// deterministically — no dependence on kernel/peer socket-buffer state.
+// A second client keeps working.
 class TcpServerBoundedWriteTest : public TcpServerTest {
 protected:
     std::size_t write_buffer_cap() const override { return 4096; }
@@ -386,9 +388,10 @@ protected:
 TEST_F(TcpServerBoundedWriteTest, SlowReaderExceedingCapIsDisconnected) {
     server_->set_frame_handler(
         [this](ClientId id, std::string_view payload) {
-            if (payload.size() >= 6 && payload.substr(0, 6) == "FLOOD_") {
-                std::string chunk(2048, 'X');
-                server_->send_to_client(id, chunk);
+            if (payload.size() >= 5 && payload.substr(0, 5) == "FLOOD") {
+                // One chunk, 4x the 4 KiB cap -> write_buffer.size() jumps
+                // past the bound on the first append, before any flush.
+                server_->send_to_client(id, std::string(16384, 'X'));
             } else {
                 std::lock_guard<std::mutex> lock(mutex_);
                 frames_.push_back({id, std::string(payload)});
@@ -400,22 +403,18 @@ TEST_F(TcpServerBoundedWriteTest, SlowReaderExceedingCapIsDisconnected) {
     ASSERT_GE(slow_fd, 0);
     ASSERT_GE(good_fd, 0);
 
-    // The slow client never reads. Each FLOOD_ frame makes the server
-    // append 2 KiB to its write_buffer; after a few, the buffer passes
-    // the 4 KiB cap and the server drops the connection.
-    for (int i = 0; i < 50; ++i) {
-        std::string msg = "FLOOD_" + std::to_string(i);
-        if (!send_all(slow_fd, make_frame(msg))) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
+    // The slow client never reads. One FLOOD frame -> a 16 KiB echo ->
+    // 16384 > 4096 cap -> connection hard-closed.
+    ASSERT_TRUE(send_all(slow_fd, make_frame("FLOOD")));
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // Slow client should now be disconnected: recv returns 0 (EOF) or
     // ECONNRESET.
     char buf[1];
     ssize_t n = ::recv(slow_fd, buf, sizeof(buf), MSG_DONTWAIT);
-    EXPECT_TRUE(n == 0 || (n < 0 && errno == ECONNRESET))
-        << "slow reader was not disconnected after exceeding the write cap";
+    EXPECT_TRUE(n == 0 || (n < 0 && (errno == ECONNRESET || errno == ENOTCONN)))
+        << "slow reader was not disconnected after exceeding the write cap"
+        << " (recv n=" << n << " errno=" << errno << ")";
 
     // Good client is unaffected.
     ASSERT_TRUE(send_all(good_fd, make_frame("STILL_ALIVE")));

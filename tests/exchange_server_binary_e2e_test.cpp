@@ -18,11 +18,14 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <variant>
+#include <vector>
 
 #include "adapters/binary_protocol/BinaryCodec.hpp"
 #include "adapters/binary_protocol/GatewayCodec.hpp"
@@ -123,6 +126,42 @@ std::optional<binary_protocol::AnyMessage> recv_binary_msg(
     if (payload.empty()) return std::nullopt;
     return binary_protocol::decode(std::span<const std::byte>(
         reinterpret_cast<const std::byte*>(payload.data()), payload.size()));
+}
+
+// Wire size of one server->client message by its leading type byte.
+std::size_t binary_msg_wire_size(std::uint8_t type_byte) {
+    switch (static_cast<binary_protocol::MessageType>(type_byte)) {
+        case binary_protocol::MessageType::Ack:
+            return binary_protocol::kAckWireSize;
+        case binary_protocol::MessageType::Reject:
+            return binary_protocol::kRejectWireSize;
+        case binary_protocol::MessageType::TradeNotification:
+            return binary_protocol::kTradeNotificationWireSize;
+        default:
+            return 0;
+    }
+}
+
+// Receive ONE frame and decode EVERY message packed into it. render_binary
+// emits an AckMsg immediately followed by zero or more TradeNotificationMsgs
+// as a single concatenated payload, framed once — so a crossing order's
+// ack + fills arrive together, not as separate frames.
+std::vector<binary_protocol::AnyMessage> recv_binary_msgs(
+    int fd, std::chrono::milliseconds timeout = std::chrono::milliseconds(3000)) {
+    std::vector<binary_protocol::AnyMessage> out;
+    std::string payload = recv_frame(fd, timeout);
+    std::size_t off = 0;
+    while (off < payload.size()) {
+        std::size_t sz =
+            binary_msg_wire_size(static_cast<std::uint8_t>(payload[off]));
+        if (sz == 0 || off + sz > payload.size()) break;
+        auto m = binary_protocol::decode(std::span<const std::byte>(
+            reinterpret_cast<const std::byte*>(payload.data() + off), sz));
+        if (!m.has_value()) break;
+        out.push_back(*m);
+        off += sz;
+    }
+    return out;
 }
 
 // --- Test Fixture ---
@@ -314,19 +353,16 @@ TEST_F(BinaryExchangeServerE2ETest, LimitOrderCrosses) {
     sell_msg.quantity = Quantity{10};
     ASSERT_TRUE(send_binary_msg(fd_b, sell_msg));
 
-    // B should get AckMsg (remaining_qty=0) + TradeNotificationMsg.
-    auto resp_b_ack = recv_binary_msg(fd_b);
-    ASSERT_TRUE(resp_b_ack.has_value());
-    ASSERT_TRUE(std::holds_alternative<binary_protocol::AckMsg>(*resp_b_ack));
-    EXPECT_EQ(std::get<binary_protocol::AckMsg>(*resp_b_ack).remaining_qty,
+    // B's crossing sell produces one frame carrying AckMsg (remaining_qty=0)
+    // immediately followed by a TradeNotificationMsg.
+    auto msgs_b = recv_binary_msgs(fd_b);
+    ASSERT_EQ(msgs_b.size(), 2u);
+    ASSERT_TRUE(std::holds_alternative<binary_protocol::AckMsg>(msgs_b[0]));
+    EXPECT_EQ(std::get<binary_protocol::AckMsg>(msgs_b[0]).remaining_qty,
               Quantity{0});
-
-    auto resp_b_trade = recv_binary_msg(fd_b);
-    ASSERT_TRUE(resp_b_trade.has_value());
     ASSERT_TRUE(std::holds_alternative<binary_protocol::TradeNotificationMsg>(
-        *resp_b_trade));
-
-    auto& tn = std::get<binary_protocol::TradeNotificationMsg>(*resp_b_trade);
+        msgs_b[1]));
+    auto& tn = std::get<binary_protocol::TradeNotificationMsg>(msgs_b[1]);
     EXPECT_EQ(tn.price, Price{100});
     EXPECT_EQ(tn.quantity, Quantity{10});
 
@@ -418,19 +454,15 @@ TEST_F(BinaryExchangeServerE2ETest, MarketOrder) {
     market_msg.quantity = Quantity{5};
     ASSERT_TRUE(send_binary_msg(fd_b, market_msg));
 
-    // B gets AckMsg + TradeNotificationMsg.
-    auto resp_b_ack = recv_binary_msg(fd_b);
-    ASSERT_TRUE(resp_b_ack.has_value());
-    ASSERT_TRUE(std::holds_alternative<binary_protocol::AckMsg>(*resp_b_ack));
-    EXPECT_EQ(std::get<binary_protocol::AckMsg>(*resp_b_ack).remaining_qty,
+    // B gets one frame carrying AckMsg + TradeNotificationMsg.
+    auto msgs_b = recv_binary_msgs(fd_b);
+    ASSERT_EQ(msgs_b.size(), 2u);
+    ASSERT_TRUE(std::holds_alternative<binary_protocol::AckMsg>(msgs_b[0]));
+    EXPECT_EQ(std::get<binary_protocol::AckMsg>(msgs_b[0]).remaining_qty,
               Quantity{0});
-
-    auto resp_b_trade = recv_binary_msg(fd_b);
-    ASSERT_TRUE(resp_b_trade.has_value());
     ASSERT_TRUE(std::holds_alternative<binary_protocol::TradeNotificationMsg>(
-        *resp_b_trade));
-
-    auto& tn = std::get<binary_protocol::TradeNotificationMsg>(*resp_b_trade);
+        msgs_b[1]));
+    auto& tn = std::get<binary_protocol::TradeNotificationMsg>(msgs_b[1]);
     EXPECT_EQ(tn.price, Price{200});
     EXPECT_EQ(tn.quantity, Quantity{5});
 

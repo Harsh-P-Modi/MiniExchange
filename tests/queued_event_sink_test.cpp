@@ -8,6 +8,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -234,10 +237,23 @@ TEST_F(QueuedParityTest, QueuedPathMatchesDirectPath) {
     EXPECT_EQ(d.ask_price, q.ask_price);
     EXPECT_EQ(d.ask_qty, q.ask_qty);
 
-    // Same wire bytes, in the same order.
+    // Same messages, in the same order. Compare structurally rather than
+    // byte-for-byte: FeedHeader.timestamp_ns is CLOCK_MONOTONIC at publish
+    // time (real on Linux, 0 on non-Linux), so the two runs legitimately
+    // differ in that field. Everything that reflects *book state* — the
+    // message type/sequence and the payload after the header — must match.
     ASSERT_EQ(direct_cap.msgs.size(), queued_cap.msgs.size());
+    constexpr std::size_t kHeaderSize = sizeof(FeedHeader);
+    constexpr std::size_t kTsOffset = offsetof(FeedHeader, timestamp_ns);
     for (std::size_t i = 0; i < direct_cap.msgs.size(); ++i) {
-        EXPECT_EQ(direct_cap.msgs[i], queued_cap.msgs[i]) << "message " << i;
+        auto a = direct_cap.msgs[i];
+        auto b = queued_cap.msgs[i];
+        ASSERT_EQ(a.size(), b.size()) << "message " << i << " size";
+        ASSERT_GE(a.size(), kHeaderSize);
+        // Blank out the timestamp field in both, then require exact equality.
+        std::fill_n(a.begin() + kTsOffset, sizeof(uint64_t), std::byte{0});
+        std::fill_n(b.begin() + kTsOffset, sizeof(uint64_t), std::byte{0});
+        EXPECT_EQ(a, b) << "message " << i << " differs outside the timestamp";
     }
 }
 

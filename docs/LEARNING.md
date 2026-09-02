@@ -7935,3 +7935,146 @@ used to get `DuplicateOrderId` on the second; it is now accepted. A
 client that reuses or decreases its *own* `OrderId` still gets
 `DuplicateOrderId`. Well-behaved gateways (monotonic `ClOrdID` per
 session) see no difference.
+
+---
+
+## Appendix — Build & Test Failures Fixed During Linux / GCC 13 Bring-up
+
+The bulk of this project was developed and test-run on a Windows box
+(msys2 ucrt64 GCC). Several targets — the TCP gateway (`adapters/tcp/`),
+the binary-protocol codec (`adapters/binary_protocol/`, needs
+`<endian.h>`), the `exchange_server` composition root, and their
+integration tests — are gated behind `if(UNIX AND NOT APPLE)` in
+`CMakeLists.txt` and only compile on Linux. When the project was first
+built end-to-end on a real Linux host (Ubuntu, GCC 13), a handful of
+errors surfaced in exactly that never-locally-compiled surface, plus one
+GCC-version regression. This appendix logs each, in the order it was
+hit, with the cause and the fix — so a future reader porting to another
+toolchain knows what to expect.
+
+### E1 — `-Werror=mismatched-new-delete` in `tools/protocol_benchmark/protocol_bench.cpp:53`
+
+**Error.** GCC 13 aborted the build with
+`error: 'void free(void*)' called on pointer returned from a mismatched
+allocation function [-Werror=mismatched-new-delete]` at
+`if (p) std::free(p);` inside the file's custom global `operator delete`.
+The diagnostic pointed into deeply inlined `nlohmann::json` allocation
+helpers (`basic_json::create` → `std::unique_ptr` → `std::_Rb_tree`
+node destruction).
+
+**Why it occurred.** `protocol_bench.cpp` deliberately overrides the
+global `operator new` / `operator delete` to count allocations for its
+"binary vs JSON allocation attribution" benchmark. Its `operator new`
+calls `std::malloc`; its `operator delete` calls `std::free`. Those
+*are* a matched pair — every `new` in the program routes through that
+`operator new`. But GCC 13 added a much more aggressive
+`-Wmismatched-new-delete` (part of `-Wall`) that, when a `new`-expression
+from `nlohmann/json` is fully inlined into the same translation unit as
+the custom `operator delete`, cannot follow the value through the custom
+allocator and concludes the `std::free` is being handed a pointer that
+came from a non-`malloc` `operator new`. It is a false positive, and
+older GCC (whatever built the earlier commits) never emitted it. This is
+a compiler-version regression, not a code change — the file is unchanged
+since Phase 7.
+
+**Fix.** `CMakeLists.txt`: added
+`target_compile_options(protocol_benchmark PRIVATE -Wno-mismatched-new-delete)`
+guarded by `if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")`. The suppression is
+scoped to that one benchmark translation unit; every other target keeps
+`-Werror` with the full warning set. The identical guard was added
+pre-emptively to `binary_codec_alloc_test` (`tests/binary_codec_alloc_test.cpp`),
+which uses the same custom-allocator pattern, though it does not include
+`nlohmann/json` and may not have tripped the warning on its own.
+
+### E2 — `QueuedParityTest.QueuedPathMatchesDirectPath` failed (Phase 11 / T5)
+
+**Error.** The test drives the same scripted order flow through (a) a
+`MatchingEngine` wired directly to a `UdpFeedPublisher` and (b) a
+`MatchingEngine` wired to `QueuedEventSink`, then drained into a second
+`UdpFeedPublisher`. It asserted the two publishers emitted byte-for-byte
+identical UDP wire messages. On Linux the byte comparison failed.
+
+**Why it occurred.** `UdpFeedPublisher` stamps every message's
+`FeedHeader.timestamp_ns` with `CLOCK_MONOTONIC` at publish time. On
+Linux that is a real, ever-advancing value, so the direct run and the
+queued run — which happen microseconds apart — legitimately produce
+different timestamp bytes in every message. On Windows,
+`UdpFeedPublisher::now_ns()` returns `0` unconditionally (it has no
+monotonic-clock implementation there), so the two runs matched exactly
+and the test passed locally. The parity assertion was simply too strict:
+it compared a transport-level timestamp that is *supposed* to differ.
+
+**Fix.** `tests/queued_event_sink_test.cpp`: the per-message comparison
+now zeroes the 8-byte `timestamp_ns` field (`offsetof(FeedHeader,
+timestamp_ns)`) in both captured buffers before requiring exact
+equality, and still checks message count, message-type order, and final
+top-of-book. Everything that reflects book *state* must match; the
+publish clock is allowed to differ.
+
+### E3 — `TcpServerBoundedWriteTest.SlowReaderExceedingCapIsDisconnected` failed (Phase 11 / T4)
+
+**Error.** The test pins a 4 KiB per-connection write-buffer cap, has a
+client send `FLOOD_` frames whose handler echoes ~2 KiB back per frame,
+never reads on that client, and expects `TcpServer` to hard-close the
+connection once the backlog passes the cap. On Linux the connection was
+never closed and the test's `recv` did not see EOF/RST.
+
+**Why it occurred.** `send_to_client` appends to `conn.write_buffer` and
+then immediately calls `flush_write_buffer`, which pushes as much as the
+kernel will accept. With a client that has a multi-hundred-KiB socket
+receive buffer and a kernel send buffer of similar size, each 2 KiB echo
+was fully absorbed by the kernel on the spot, so `conn.write_buffer`
+dropped back to ~0 after every frame and never actually accumulated past
+the 4 KiB cap. The test sent only 50 frames (~100 KiB total) — not
+enough to fill the kernel + peer buffers and force `send()` to return
+`EAGAIN` with data left buffered. The R4 production code was correct;
+the test's assumption about *when* the buffer grows was wrong.
+
+**Fix.** `tests/tcp_server_test.cpp`: the handler now echoes a single
+16 KiB chunk (4× the cap) on the first `FLOOD` frame. The R4 check is
+`conn.write_buffer.size() > max_write_buffer_bytes_` evaluated right
+after the `append` and *before* the flush, so one append larger than the
+cap trips the disconnect deterministically, with no dependence on
+kernel/peer socket-buffer state. The test now sends exactly one frame.
+
+### E4 — `BinaryExchangeServerE2ETest.LimitOrderCrosses` / `.MarketOrder` failed (pre-existing, Phase 7/9)
+
+**Error.** For a crossing order, both tests call `recv_binary_msg(fd_b)`
+twice — expecting the `AckMsg` in one frame and the following
+`TradeNotificationMsg` in a second, separate frame. The second
+`recv_binary_msg` timed out and returned `nullopt`, failing
+`ASSERT_TRUE(resp_b_trade.has_value())`.
+
+**Why it occurred.** `binary_protocol::render_binary` has, since Phase 7,
+serialized an accepted-with-fills response as an `AckMsg` *immediately
+followed by* zero or more `TradeNotificationMsg`s in a **single**
+concatenated payload, which the gateway's drain handler wraps in **one**
+length-prefixed frame. So a crossing order's ack and its fill arrive
+together, in one frame — never as two. The tests' two-frame assumption
+was wrong from the day they were written; it was never caught because
+`exchange_server_binary_e2e_test` is `#ifdef __linux__` and the project's
+routine test runs were on Windows, where this target is not built at
+all. Phase 11's only changes to `render_binary` were the `order_id`
+field value (placeholder `0` → the real id, R2) and one added
+`switch` case (`InternalError`, R3) — neither affects framing — so this
+is a latent pre-existing bug that the first Linux run exposed, not a
+Phase 11 regression.
+
+**Fix.** `tests/exchange_server_binary_e2e_test.cpp`: added a
+`recv_binary_msgs()` helper that reads one frame and splits it into every
+message packed inside it (walking by each message type's known wire
+size: `kAckWireSize`, `kTradeNotificationWireSize`, `kRejectWireSize`).
+`LimitOrderCrosses` and `MarketOrder` now read that one frame and assert
+it decodes to exactly `{AckMsg, TradeNotificationMsg}`. The single-message
+`recv_binary_msg` is unchanged and still used by the non-crossing tests.
+
+### Note on coverage
+
+Everything outside the six Linux-only source files
+(`adapters/tcp/tcp_server.cpp`, the three `adapters/binary_protocol/*.cpp`,
+`apps/exchange_server/main.cpp`, `tools/protocol_benchmark/protocol_bench.cpp`)
+is compiled locally under `-Wall -Wextra -Wpedantic -Werror` by a GCC
+*newer* than the Linux host's (16.x vs 13.x), and the full local test
+binary set passes. So the platform-neutral code of Phases 1–11 is already
+clean at a stricter bar than the Linux toolchain applies; the errors
+above are confined to the gated surface that local builds never touch.
