@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <filesystem>
 #include <iomanip>
@@ -157,8 +158,13 @@ void write_results(const std::string& path,
     std::ofstream out(path);
 
     out << "# Phase 4 — Queue Comparison: Lock-Free vs. Mutex Baseline\n\n";
-    out << "**Environment:** Windows laptop, no CPU pinning, "
-           "RelWithDebInfo build, "
+    // Environment string is overridable via MINIEXCHANGE_BENCH_ENV so a
+    // controlled Linux run records its own host/pinning/governor details.
+    const char* bench_env = std::getenv("MINIEXCHANGE_BENCH_ENV");
+    if (bench_env == nullptr || bench_env[0] == '\0') {
+        bench_env = "Windows laptop, no CPU pinning";
+    }
+    out << "**Environment:** " << bench_env << ", RelWithDebInfo build, "
         << kQueueCapacity << "-slot queue capacity\n\n";
 
     out << "## Isolated Per-Operation Latency (single-threaded)\n\n";

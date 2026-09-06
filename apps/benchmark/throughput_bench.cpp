@@ -6,6 +6,7 @@
 
 #include <benchmark/benchmark.h>
 
+#include <cstddef>
 #include <variant>
 
 #include "core/NewOrder.hpp"
@@ -32,8 +33,14 @@ static void BM_SustainedThroughput(benchmark::State& state) {
     WorkloadGenerator gen(config);
     auto events = gen.generate(100'000);
 
+    // Pool sized to the bounded workload (0.3 cancel ratio keeps the book
+    // well under 128k), not the 1,000,000-slot production default whose
+    // 72 MB alloc + page-touch per repetition is pure benchmark overhead.
+    constexpr std::size_t kThroughputPoolCapacity = 1u << 18;  // 262144
+
     for (auto _ : state) {
-        MatchingEngine engine;  // fresh per repetition
+        MatchingEngine engine{NullEventSink::instance(),
+                              kThroughputPoolCapacity};  // fresh per repetition
         for (const auto& event : events) {
             std::visit(
                 [&](const auto& e) {

@@ -8078,3 +8078,38 @@ is compiled locally under `-Wall -Wextra -Wpedantic -Werror` by a GCC
 binary set passes. So the platform-neutral code of Phases 1–11 is already
 clean at a stricter bar than the Linux toolchain applies; the errors
 above are confined to the gated surface that local builds never touch.
+
+### E5 — `benchmark_harness` appeared to hang for minutes on Linux (Phase 2/3, aggravated by Phase 8)
+
+**Error.** Run from the repo root on Linux, `./build/benchmark_harness`
+produced no output and did not finish after ~6 minutes; it was killed,
+`benchmarks/results/phase-03-pooled.md` was never written. `queue_benchmark`
+(which does not build a `MatchingEngine`) ran fine.
+
+**Why it occurred.** Every latency-benchmark iteration constructs a fresh
+`MatchingEngine`, and the default constructor allocates a **1,000,000-slot
+`OrderPool`**: `::operator new(1'000'000 * sizeof(Order))` — with Phase 8's
+72-byte `Order` that is **72 MB** — followed by a strided free-list-init
+loop (`next_free(i) = i + 1` for every slot) that writes 8 bytes at
+`storage_ + i*72`, touching all ~18,000 pages. `benchmark_harness` does
+this ~60,000 times (10,000 iterations each for ADD-no-match, ADD×{1,10,100}
+fills, CANCEL front/back, plus throughput reps). On Linux, where pages are
+zeroed on first touch, that is ~4.3 TB of page-faulting write traffic —
+minutes. It "worked" on the Windows box the original numbers came from
+only because that path was never really fast there either (and Windows
+commits large allocations differently); Phase 8 growing `Order` 64 → 72
+bytes made it ~12% worse but did not create it. Nothing about the code
+was *wrong* — it was measuring a single timed `submit()`/`cancel()` whose
+cost is independent of pool size — the giant pool was pure per-iteration
+setup waste.
+
+**Fix.** `apps/benchmark/latency_bench.cpp`, `apps/benchmark/main.cpp`
+(`measure_throughput`), and `apps/benchmark/throughput_bench.cpp`
+(`BM_SustainedThroughput`) now pass an explicit small pool capacity to the
+`MatchingEngine` constructor instead of taking the 1,000,000-slot default:
+`4096` for the latency micro-benchmarks (deepest per-iteration book is
+~101 orders) and `262144` for the mixed-workload throughput runs (100k
+events with a 0.30 cancel ratio keep the resting book well under that).
+The production default is unchanged — only the benchmark harness is
+affected. After the fix `benchmark_harness --benchmark_min_time=0.1s`
+completes in ~5 s.

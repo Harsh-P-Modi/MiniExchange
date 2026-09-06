@@ -57,8 +57,16 @@ double measure_throughput() {
     // Run multiple repetitions and take the best (least noisy) measurement.
     double best_ops_per_sec = 0.0;
 
+    // The mixed workload is bounded: 100k events with a 0.3 cancel ratio
+    // keep the resting book well under 128k orders. Use a pool sized to
+    // that rather than the 1,000,000-slot production default — a 72 MB
+    // allocation + full page-touch per repetition is pure benchmark
+    // overhead (and, in the latency loop, was minutes of it on Linux).
+    constexpr std::size_t kThroughputPoolCapacity = 1u << 18;  // 262144
+
     for (std::size_t rep = 0; rep < kThroughputRepetitions; ++rep) {
-        MatchingEngine engine;
+        MatchingEngine engine{NullEventSink::instance(),
+                              kThroughputPoolCapacity};
 
         auto start = std::chrono::steady_clock::now();
         for (const auto& event : events) {
@@ -170,9 +178,16 @@ int main(int argc, char** argv) {
     constexpr double kPhase2Throughput = 2'920'000.0;  // 2.92M orders/sec
 
     const char* results_path = "benchmarks/results/phase-03-pooled.md";
+    // Override the recorded environment string with MINIEXCHANGE_BENCH_ENV
+    // (e.g. "Linux Ubuntu 24.04, i7-1165G7, kernel 6.8, taskset -c 2,3,
+    // governor=performance") so a controlled run documents itself
+    // honestly. Falls back to the historical Windows-laptop note.
+    const char* bench_env = std::getenv("MINIEXCHANGE_BENCH_ENV");
+    if (bench_env == nullptr || bench_env[0] == '\0') {
+        bench_env = "Windows laptop, no CPU pinning, no turbo-boost control";
+    }
     write_results(results_path, latency_results, throughput_results,
-                  "Windows laptop, no CPU pinning, no turbo-boost control",
-                  "Phase 3 — Memory Pool Results",
+                  bench_env, "Phase 3 — Memory Pool Results",
                   phase2_baseline, kPhase2Throughput);
     std::printf("Results written to: %s\n\n", results_path);
 

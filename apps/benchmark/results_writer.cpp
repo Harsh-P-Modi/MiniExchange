@@ -138,9 +138,9 @@ void write_results(const std::string& filepath,
                "eliminating heap fragmentation and per-order `new`/`delete` over a "
                "long-lived engine — is best visible in sustained throughput, not in "
                "micro-benchmarks where pool construction cost (one large allocation at "
-               "startup) amortizes across fewer operations. Results collected on a "
-               "Windows laptop without CPU pinning or turbo-boost control; relative "
-               "comparisons are directionally meaningful but absolute numbers vary "
+               "startup) amortizes across fewer operations. Absolute numbers depend "
+               "on the host and its CPU-frequency settings (see the Environment line "
+               "above); relative comparisons are directionally meaningful but vary "
                "between runs.\n";
     }
 }
