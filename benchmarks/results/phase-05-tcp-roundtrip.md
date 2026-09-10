@@ -55,23 +55,52 @@ of the engine-internal latency measured in Phase 2.
 
 ## Results
 
-*To be collected on Linux (Ubuntu 24.04 LTS) with taskset pinning.*
+Collected on Linux (Ubuntu 24.04.5 LTS), Intel Core i5-13500H, kernel
+7.0.0-31-generic, RelWithDebInfo, `taskset -c 2,3`, governor=performance,
+turbo=off. Commit 164e03b. OS-assigned ephemeral port (43541 this run).
 
 | Metric | ADD (no match) | CANCEL | ADD (1 fill) |
 |---|---|---|---|
 | Iterations | 10,000 | 10,000 | 10,000 |
-| Avg (μs) | TBD | TBD | TBD |
-| Median (μs) | TBD | TBD | TBD |
-| P99 (μs) | TBD | TBD | TBD |
-| Max (μs) | TBD | TBD | TBD |
+| Avg (μs) | 33.31 | 33.19 | 33.64 |
+| Median (μs) | 34.46 | 34.47 | 35.25 |
+| P99 (μs) | 38.70 | 38.68 | 38.72 |
+| Max (μs) | 94.12 | 145.51 | 49.60 |
 
 ### TCP overhead (round-trip median minus Phase 2 engine-internal median)
 
 | Operation | Round-trip median | Engine-internal median | TCP overhead |
 |---|---|---|---|
-| ADD (no match) | TBD | 900 ns | TBD |
-| CANCEL | TBD | 300 ns | TBD |
-| ADD (1 fill) | TBD | 600 ns | TBD |
+| ADD (no match) | 34.46 μs | 900 ns | ~33.6 μs |
+| CANCEL | 34.47 μs | 300 ns | ~34.2 μs |
+| ADD (1 fill) | 35.25 μs | 600 ns | ~34.7 μs |
+
+### Reading the numbers
+
+- **The response type barely matters.** ADD-no-match, CANCEL and
+  ADD-1-fill land within ~0.8 μs of each other at the median. Confirmed:
+  the engine work (300–900 ns) is negligible next to the round-trip
+  fixed cost, and one extra fill in the response doesn't move it.
+- **The fixed cost is ~34 μs, not the 5–15 μs this doc predicted.**
+  That estimate assumed a busy-polling / co-scheduled I/O and engine
+  thread. This run pins both threads to cores 2,3 with `taskset` but does
+  **not** isolate those cores (`isolcpus`), busy-poll the sockets, or
+  pin the eventfd wakeup path — so each round trip pays: two loopback TCP
+  syscall pairs, an `epoll_wait` edge notification, an SPSC hop each
+  direction, an `eventfd` write+read to wake the I/O thread, and at least
+  one scheduler wakeup latency where the engine thread was idle on the
+  inbound queue. On a non-isolated, non-polling setup ~30 μs of that is
+  wakeup + loopback stack, which is the dominant term.
+- **Tight distribution.** P99 is only ~1.12× the median for all three ops
+  (38.7 vs ~34.5 μs), and the CANCEL max spike to 145 μs is a single
+  scheduler outlier over 10,000 samples. The pipeline is consistent; it
+  is just not busy-polling.
+- **To get toward the single-digit-μs regime** would need `isolcpus` +
+  `nohz_full` on the pinned cores, `SO_BUSY_POLL` or a userspace poll
+  loop instead of `epoll_wait`, and replacing the `eventfd` cross-thread
+  wake with a spin on the outbound queue. Those are deliberately out of
+  scope here — this benchmark's job is to quantify what the current
+  epoll+eventfd design costs, and the answer is ~34 μs round trip.
 
 ## How to run
 

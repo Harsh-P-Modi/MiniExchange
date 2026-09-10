@@ -6,15 +6,59 @@ crossing-order load, captured on the **pre-Phase-11** build and the
 **post-T6** build, same load shape and duration, comparing the counts
 for `sendto`, `write`, and `sched_yield`.
 
-## Measurement status: NOT captured in this environment
+## Measurement status: NOT captured
 
-The development environment for this session is a Windows laptop
-(msys2 ucrt64 toolchain) with **no Linux host and no WSL distribution
-installed**. `apps/exchange_server`, the TCP adapter, and the binary
-protocol codec are gated behind `if(UNIX AND NOT APPLE)` in
-`CMakeLists.txt` (they use `epoll`, `eventfd`, `sendto`, `<endian.h>`),
-so the server binary this trace targets **cannot be built or run here**,
-and `perf` does not exist on this platform.
+### Attempt 1 (Windows) — impossible on the platform
+
+The original development environment was a Windows laptop (msys2 ucrt64
+toolchain) with **no Linux host and no WSL distribution installed**.
+`apps/exchange_server`, the TCP adapter, and the binary protocol codec
+are gated behind `if(UNIX AND NOT APPLE)` in `CMakeLists.txt` (they use
+`epoll`, `eventfd`, `sendto`, `<endian.h>`), so the server binary this
+trace targets **cannot be built or run there**, and `perf` does not exist
+on that platform.
+
+### Attempt 2 (Linux, 2026-09-10) — load generator deadlocked
+
+A controlled Linux run (Ubuntu 24.04.5, i5-13500H) built both server
+binaries, but the ad-hoc load generator sent the **plaintext** wire
+protocol while `exchange_server` **defaults to `--protocol=binary`**
+(`apps/exchange_server/main.cpp:104`). The server could not parse the
+frames and silently dropped them (`main.cpp:235`); the generator's
+blocking `recv()` had no timeout and hung indefinitely. No trace was
+produced. Phases 4/5/7 from the same run were captured successfully — see
+`../../BENCHMARKS-linux-2026-09-10.md`.
+
+### Attempt 3 (Linux, 2026-09-10) — `perf trace` option combo rejected
+
+Load generator fixed (plaintext + socket timeout + UDP sink). Servers
+started fine. But `perf trace -s --per-thread -p <pid>` on this kernel
+(`7.0.0-31-generic`) printed its usage text instead of a summary — that
+option combination is not accepted by this `perf` build. Both "before"
+and "after" captures came back as the same help blurb.
+
+### Attempt 4 (Linux, 2026-09-10) — `strace -ff -c` rejected
+
+Switched to `strace -ff -c -o <file> -- taskset … exchange_server …`.
+This `strace` rejects `-ff` combined with `-c`; strace exited before
+`exec`ing the server, so the launch check reported "server failed to
+start" for both builds.
+
+### Known-good method (use this)
+
+`strace -ff -c` fails, but plain `strace -f` **attached to an
+already-running pid** works. Launch the server bare, verify it answers,
+then attach:
+
+```
+strace -f -e trace=sendto,write,writev,sched_yield,eventfd2 \
+       -o strace-<label>.log -p <server-pid>
+```
+
+`strace -f` tags every line with `[pid <TID>]`, so per-thread counts come
+from `grep`/`awk` on the log rather than from a `-c` summary. The
+repo-root `bench_finish.sh` implements exactly this (bare launch → sanity
+round-trip → attach → 20,000-order load → `kill -INT`).
 
 Rather than fabricate or hand-wave a syscall histogram, the numbers are
 left explicitly pending a controlled Linux run — the same treatment
@@ -75,18 +119,25 @@ built for Linux (`cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
    top-of-book changes. Target a fixed count, e.g. 500,000 orders.
    Keep `TCP_NODELAY` on (matches the server).
 
-4. **Trace each build** for the same fixed order count:
+4. **Trace each build** for the same fixed order count. On the box used
+   here (`perf trace` option combo and `strace -ff -c` both rejected —
+   see status section), the working method is bare launch + `strace -f`
+   attach:
    ```
-   taskset -c 2,3 ./build/exchange_server 9000 &            # or the pre-p11 binary
+   pkill -9 -f 'exchange_server 9100'; sleep 1
+   setsid taskset -c 2,3 ./build/exchange_server 9100 --protocol=plaintext &  # or pre-p11 binary
    SRV=$!
-   perf trace -s -p $SRV -- sleep 0  &                       # attach
-   # ... run the load generator to completion against :9000 ...
-   kill -INT $SRV                                            # clean shutdown
-   wait $SRV                                                 # perf prints the -s summary
+   sleep 2                                                   # let it bind + spawn threads
+   strace -f -e trace=sendto,write,writev,sched_yield,eventfd2 \
+          -o strace-<label>.log -p $SRV &
+   STR=$!
+   # ... run the load generator (20k+ alternating SELL/BUY orders) against :9100 ...
+   kill -INT $STR; wait $STR
+   kill -INT $SRV; wait $SRV
    ```
-   (Equivalently: `perf trace -s --summary -p $SRV` for the whole run,
-   or `strace -f -c -p $SRV` if `perf` is unavailable — `strace -c` also
-   gives a per-syscall count table.)
+   Per-thread counts: `awk` the `[pid <TID>]` prefix on `strace-<label>.log`
+   (see `bench_finish.sh`). `perf trace -s --summary -p $SRV` is the
+   equivalent on kernels where it is accepted.
 
 5. **Record** the `sendto`, `write`, and `sched_yield` rows from both
    summaries into a table here, plus: kernel version, CPU model, whether

@@ -1,8 +1,12 @@
 # Phase 8 — `Order` size change: matching-path benchmark
 
-Environment (intended): same uncontrolled Windows laptop as the Phase 2
-baseline and Phase 3 results — no CPU pinning, no turbo-boost control.
-Build: RelWithDebInfo (`build_check`, msys2 ucrt64 GCC + Ninja).
+**64-byte baseline:** controlled Linux run — Ubuntu 24.04.5, Intel Core
+i5-13500H, kernel 7.0.0-31-generic, RelWithDebInfo, `taskset -c 2,3`,
+governor=performance, turbo=off. Commit `49d4a15` (the last commit before
+the `owner` field was added), with the benchmark's per-iteration pool
+capacity patched from 1,000,000 to 4,096 — see "Status" for why.
+
+**72-byte side:** controlled run still pending — see "Status".
 
 ## What changed and why we measure it
 
@@ -28,57 +32,67 @@ walks a chain of resting `Order`s via `Order::next`, reading each one's
 `price`/`quantity`. A resting order now straddles two cache lines, so in
 the worst case each examined order costs an extra line fetch.
 
-## Measurement status: PENDING a controlled run
+## Status
 
-The numeric latency/throughput comparison for this change was **not
-captured in this working session** — the local shell used to drive the
-benchmark harness was unreliable (commands intermittently failed to
-produce output), so no trustworthy numbers could be recorded. Rather
-than paste a half-captured or noisy figure, the measurement is left
-explicitly pending.
+### 64-byte `Order` — measured (controlled Linux, 49d4a15)
 
-This is consistent with the honesty the existing baseline docs already
-apply to themselves: both `phase-02-baseline.md` and `phase-03-pooled.md`
-conclude that numbers gathered on this uncontrolled Windows laptop are
-"dominated by system noise" and recommend re-running on Linux with
-`taskset 1`, `performance` governor, and turbo-boost disabled for any
-production-grade comparison. A cache-line-straddle effect of a few
-nanoseconds per examined order is well below that noise floor on this
-box and would not be distinguishable here anyway.
+| Operation | Avg (ns) | Median (ns) | P99 (ns) | Max (ns) |
+|---|---|---|---|---|
+| ADD (no match) | 244.2 | 242.0 | 301.0 | 6,295 |
+| ADD (1 fill) | 110.0 | 104.0 | 174.0 | 2,312 |
+| ADD (10 fills) | 798.3 | 792.0 | 886.0 | 6,219 |
+| ADD (100 fills) | 8,493.2 | 8,440.0 | 10,133.0 | 149,549 |
+| CANCEL (front) | 71.8 | 69.0 | 102.0 | 608 |
+| CANCEL (back) | 70.8 | 68.0 | 100.0 | 1,734 |
 
-### How to produce the numbers (reproduction steps)
+Mixed workload (60% limit / 10% market / 30% cancel): **9.57M orders/sec**
+(best of 10 reps).
 
-The harness is already wired and builds clean with the 72-byte `Order`:
+This is the first *controlled* capture of these numbers — every earlier
+table (`phase-02-baseline.md`, `phase-03-pooled.md`) was an uncontrolled
+Windows laptop and self-describes as "dominated by system noise". Treat
+this as the 64-byte reference, not the Phase 2 medians: e.g. ADD
+(100 fills) is 8,440 ns here vs the Windows table's 19,500 ns — the
+Windows figure was ~2.3× inflated by scheduler/turbo noise, nothing
+structural.
+
+### 72-byte `Order` — controlled run still required
+
+Not yet captured under matched conditions. The one partial run that
+exists (commit 164e03b, current tree) is **not usable** for the delta:
+
+- Its `latency_bench.cpp` still constructs each per-iteration engine with
+  the **default 1,000,000-slot pool**. Construction is untimed, but
+  `new Order[1'000'000]` + free-list init strides ~72 MB and evicts every
+  cache level and the TLB, so the *timed* op then runs cold. The 64-byte
+  run above used a 4,096-slot pool (~256 KB, stays in L2) — hence the
+  pool-cap patch noted at the top.
+- That run reported ADD (no match) median **1,442 ns** and ADD (1 fill)
+  **710 ns** — 6× and 7× the 64-byte numbers. That gap is the cold-cache
+  artifact of the 72 MB stride, not 8 bytes of struct growth, and cannot
+  be subtracted out from two data points. The run also stalled after row
+  2 (1 M-slot alloc × 10,000 iterations is minutes of page-fault churn),
+  so **ADD (10 fills)** and **ADD (100 fills)** — the only rows that carry
+  a cache-line-straddle signal — were never recorded.
+
+### To close this
+
+Run the 72-byte harness from a commit whose `latency_bench.cpp` caps the
+bench pool at 4,096 (that landed in `5168fb0`), on the same box:
 
 ```
-cmake --build build_check --target benchmark_harness
-./build_check/benchmark_harness.exe --benchmark_min_time=0.1s
+git worktree add /tmp/mx-p8-after 5168fb0
+cmake -S /tmp/mx-p8-after -B /tmp/mx-p8-after/build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build /tmp/mx-p8-after/build --target benchmark_harness
+( cd /tmp/mx-p8-after && stdbuf -oL -eL taskset -c 2,3 ./build/benchmark_harness )
+git worktree remove /tmp/mx-p8-after --force
 ```
 
-It prints the six single-operation latency rows (ADD no-match / 1 / 10 /
-100 fills, CANCEL front / back) and the mixed-workload throughput, and
-writes a comparison table. To attribute this change specifically:
-
-1. Record numbers on the current tree (72-byte `Order`).
-2. Compare against the Phase 2 baseline table below. The most
-   size-sensitive rows are **ADD (10 fills)** and **ADD (100 fills)**,
-   since those walk the longest resting-order chains and thus touch the
-   most `Order` cache lines. ADD (no match) and CANCEL should be
-   essentially unaffected (they touch at most one or two orders).
-3. Run on the Linux/CI environment for the authoritative figure, since
-   the delta is expected to be at or below this laptop's noise floor.
-
-### Phase 2 baseline (for the eventual comparison)
-
-| Operation | Median (ns) |
-|---|---|
-| ADD (no match) | 900 |
-| ADD (1 fill) | 600 |
-| ADD (10 fills) | 2300 |
-| ADD (100 fills) | 19500 |
-| CANCEL (front) | 300 |
-| CANCEL (back) | 200 |
-| Mixed throughput | 2.92M orders/sec |
+(`bench_finish.sh` at the repo root does exactly this, plus the R9 trace.)
+Then compare the `ADD (10 fills)` / `ADD (100 fills)` medians against the
+64-byte table above. ADD (no match) and CANCEL should be flat (they touch
+≤ 2 orders); any real cost of the 64→72 change shows on the deep-sweep
+rows or nowhere.
 
 ## Expectation (hypothesis to confirm, not a measured result)
 
